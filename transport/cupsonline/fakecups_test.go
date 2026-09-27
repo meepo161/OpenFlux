@@ -872,3 +872,19 @@ func TestCreateRoomListIsWhatTheExitJoins(t *testing.T) {
 	deliver(t, client, exit, []byte("up"), 2*time.Second)
 	deliver(t, exit, client, []byte("down"), 2*time.Second)
 }
+
+// cups.online turning an address away must reach the wizard as that, not
+// as a stopped transport.
+func TestCreateRoomListReportsRefusal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) }))
+	defer srv.Close()
+	old := baseRoomURL
+	baseRoomURL = srv.URL + "/live-coding/"
+	defer func() { baseRoomURL = old }()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := CreateRoomList(ctx)
+	if err == nil || !strings.Contains(err.Error(), "ограничение") {
+		t.Fatalf("got %v", err)
+	}
+}

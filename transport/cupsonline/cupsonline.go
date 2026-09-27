@@ -403,9 +403,9 @@ func createRooms(ctx context.Context, baseURL string, n int, pause time.Duration
 	if delay <= 0 {
 		delay = 150 * time.Millisecond
 	}
+	var lastErr error
 	for i := 0; i < n; i++ {
 		var a *cupsAuth
-		var lastErr error
 		for attempt := 0; attempt < 6; attempt++ {
 			a, lastErr = authorize(ctx, baseURL, nil)
 			if lastErr == nil {
@@ -423,7 +423,7 @@ func createRooms(ctx context.Context, baseURL string, n int, pause time.Duration
 			}
 			utils.Debugf("[CUPS] room %d attempt %d failed: %v (wait %v)", i+1, attempt+1, lastErr, wait)
 			if !sleepCtx(ctx, wait) {
-				return nil, errStopped
+				return nil, fmt.Errorf("%w (%v)", errStopped, lastErr)
 			}
 		}
 		if a == nil {
@@ -437,7 +437,7 @@ func createRooms(ctx context.Context, baseURL string, n int, pause time.Duration
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("could not create any room")
+		return nil, fmt.Errorf("could not create any room: %v", lastErr)
 	}
 	return out, nil
 }
@@ -450,6 +450,9 @@ func CreateRoomList(ctx context.Context) (string, error) {
 	cfg := DefaultCupsonlineConfig()
 	auths, err := createRooms(ctx, baseRoomURL, cfg.NumRooms, cfg.RoomCreatePause)
 	if err != nil {
+		if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "429") {
+			return "", errors.New("cups.online отказывает этому адресу в новых комнатах (похоже на ограничение по частоте), попробуйте позже или выберите другой транспорт")
+		}
 		return "", err
 	}
 	ids := make([]string, len(auths))
