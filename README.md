@@ -580,6 +580,7 @@ Measure raw goodput through the transport, without touching the host network:
 | `--mode` | `-m` | `l3` | Exit-node mode: `l3` \| `l4` |
 | `--codec` | `-c` | `batched` | `batched` \| `legacy` |
 | `--url` | `-u` | `http://#` | Document URL |
+| `--url-file` | | | Read `--url` from a file (first non-comment line), keeping the document URL out of the process list and shell history |
 | `--socks5` | `-s` | `:1080` | SOCKS5 listen address |
 | `--http-proxy` | | | Also serve an HTTP proxy (CONNECT + plain requests) on this address |
 | `--local-ip` | `-l` | (auto) | Egress IP for l3 SNAT / RST filter |

@@ -224,6 +224,7 @@ func main() {
 			"from --config), falling back to --transport. Only set this to override that derivation.")
 
 	flag.StringVar(&globalDocUrl, "url", "http://#", "Document URL. If u use Yandex.Docs transport")
+	urlFile := flag.String("url-file", "", "Read --url from this file, so the document URL stays out of the process list and shell history")
 	flag.StringVar(&maxToken, "maxToken", "", "MAX Web token. If u use MAX transport")
 	flag.StringVar(&maxUid, "maxUid", "", "MAX call user id. If u use MAX transport")
 	directDial := flag.String("direct-dial", "", "DirectTransport: exit address to dial (client). Requires --encryption-key-file")
@@ -503,6 +504,17 @@ DEPRECATED (removed in v2)
 	}
 
 	// Platform defaults. The recommended client path is utun on macOS and
+	if *urlFile != "" {
+		if globalDocUrl != "http://#" {
+			log.Fatal("--url-file and --url are exclusive")
+		}
+		u, err := readURLFile(*urlFile)
+		if err != nil {
+			log.Fatalf("--url-file: %v", err)
+		}
+		globalDocUrl = u
+	}
+
 	// SOCKS5 everywhere else (see README for details).
 	if *inbound == "" {
 		if runtime.GOOS == "darwin" {
