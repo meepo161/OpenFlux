@@ -64,7 +64,11 @@ type TCPTunnel struct {
 	stopOnce    sync.Once
 	stopCh      chan struct{}
 	udpFlows    atomic.Int32
+	err         error
 }
+
+// Err reports why the tunnel could not be set up, or nil.
+func (t *TCPTunnel) Err() error { return t.err }
 
 var (
 	TCPBufMin     = 4 * 1024 * 1024
@@ -137,7 +141,11 @@ func NewTCPTunnelMode(trans transport.Transport, isExitNode bool, mode ExitMode)
 
 	tunnelNIC := tcpip.NICID(1)
 	if err := t.gvisorStack.CreateNIC(tunnelNIC, tunnelEP); err != nil {
-		utils.Debugf("[TUNNEL] CreateNIC tunnel error: %v", err)
+		// Without the NIC nothing is forwarded; Err reports it so an exit
+		// does not stay up looking healthy.
+		t.err = fmt.Errorf("tunnel: create NIC: %v", err)
+		utils.Infof("[TUNNEL] %v", t.err)
+		return t
 	}
 
 	if isExitNode {

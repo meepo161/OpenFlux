@@ -978,6 +978,9 @@ func runClient(trans transport.Transport, inbound, socksAddr, httpProxyAddr stri
 		// for platforms without a tun client (see README).
 		log.Printf("Running as CLIENT (SOCKS5 on %s, legacy gVisor path)", socksAddr)
 		tun := tunnel.NewTCPTunnelMode(trans, false, exitMode)
+		if err := tun.Err(); err != nil {
+			log.Fatal(err)
+		}
 		if httpProxyAddr != "" {
 			ln, err := net.Listen("tcp", httpProxyAddr)
 			if err != nil {
