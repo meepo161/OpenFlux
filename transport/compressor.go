@@ -41,6 +41,7 @@ func (c *CompressedTransport) Receive(callback func([]byte)) {
 			return
 		}
 		if err != nil {
+			hintCodecMismatch(data, true)
 			callback(data) // fallback
 			return
 		}
