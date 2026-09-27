@@ -519,6 +519,16 @@ context, with `direct` pointing at the exit:
 - In practice a real browser coming from the exit's address is usually let
   straight through to the document (the captcha targets the transport's HTTP
   client), so loading the page and sending its cookies is typically enough.
+- **A headless exit with no client yet** has nobody to ask. Pass the check
+  once from a desktop browser that goes out through the exit's address, for
+  example over an SSH tunnel: `ssh -D 1080 user@exit`, point the browser at
+  SOCKS5 `127.0.0.1:1080` and open the document. Then hand the cookies to
+  the exit: for `vyandex` export them as a Netscape `cookies.txt` and start
+  the exit with `--yandex-cookies-file`; for the other transports put them
+  into the `--cookie-store` file, a JSON object of
+  `{"<document URL>": {"<name>": "<value>", ...}}`. The node wizards of the
+  desktop and Android apps write a Yandex sign-in into that file the same
+  way.
 - Cookies are persisted in `--cookie-store` (default
   `./cookies-<transport>.json`) and reused after restarts. Under systemd with
   `ProtectSystem=strict`, point it at a writable directory.
