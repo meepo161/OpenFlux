@@ -36,11 +36,11 @@
 set -u
 umask 077
 
-CORE_VERSION="node-v1.3.0"
+CORE_VERSION="node-v1.4.0"
 CORE_BASE="https://github.com/meepo161/openfluxfork/releases/download/$CORE_VERSION"
-SHA_amd64="cf0b3c87b8701d0f701b65c8d98f6d20f6c4d9ae26a64945ad639b45ce30a1fb"
-SHA_arm64="5eea92ba9f1caee6147ec2b993aec80865170e526c7978536a07bf65a189cdcd"
-SHA_arm="6cc1a7fb1aab525ce0bbd7a4f8e1d82cfc85f50cf08f1467a01dc4e61294a253"
+SHA_amd64="a7612652a749dd3bf2f924c6c6b80ef20a9dc8b46fcde99c4404943e8ef61a69"
+SHA_arm64="3b1955b45b05cd66c10093a239903352db35b47251060f197593655cd253e132"
+SHA_arm="27fe18f7a581f92c52dd637a9695a0853d57fc7b4570116cb7126a3c6951ad88"
 
 BIN_DIR="/opt/openflux-node/bin"
 CONF_ROOT="/etc/openflux-node"
