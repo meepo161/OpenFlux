@@ -30,6 +30,7 @@
 #        node-install.sh update                   (run as root, by the timer:
 #                                                 move every channel to the
 #                                                 newest node-v* release)
+#        node-install.sh autoupdate on|off        (run as root: the updater)
 # The config is "key=value" lines: channel, key, port, the transports
 # (vyandex= or its old name url=: a Yandex document; mailru=: a Mail.ru
 # public document; cupsonline=: the packed room list), autoupdate=yes|no,
@@ -174,11 +175,27 @@ installed_core() {
     esac
 }
 
+# managed_core: installed_core, if this script or the updater put it there
+# (BIN_DIR/.managed lists those). A core from anywhere else, such as an old
+# fork's node-v1.4.0 whose number says nothing about this repository's
+# releases, counts as none.
+managed_core() {
+    cur=$(installed_core)
+    [ -n "$cur" ] && grep -qsxF "$cur" "$BIN_DIR/.managed" && printf '%s' "$cur"
+    return 0
+}
+
+mark_managed() {
+    grep -qsxF "$1" "$BIN_DIR/.managed" || printf '%s\n' "$1" >> "$BIN_DIR/.managed"
+    # A plain user's plan reads it too.
+    chmod 0644 "$BIN_DIR/.managed"
+}
+
 # core_to_use: this script's core, or the installed one when the updater has
 # already moved the server to a newer release (an older app must not
 # downgrade every channel).
 core_to_use() {
-    cur=$(installed_core)
+    cur=$(managed_core)
     if [ -n "$cur" ] && version_gt "$cur" "$CORE_VERSION"; then printf '%s' "$cur"; else printf '%s' "$CORE_VERSION"; fi
 }
 
@@ -430,6 +447,7 @@ install_core() {
         CREATED_BIN=1
     fi
     ln -sfn "openflux-$CORE_VERSION" "$BIN_DIR/openflux"
+    mark_managed "$CORE_VERSION"
 }
 
 write_unit() {
@@ -739,7 +757,7 @@ cmd_update() {
     arch=$(detect_arch)
     [ -n "$arch" ] || fail update "архитектура $(uname -m) не поддерживается"
     repo=$(release_repo)
-    current=$(installed_core)
+    current=$(managed_core)
     work=$(mktemp -d /tmp/openflux-node-update.XXXXXX) || fail update "не удалось создать временную папку"
     trap 'rm -rf "$work"' EXIT
     fetch "$GITHUB_API/repos/$repo/releases?per_page=30" "$work/releases.json" \
@@ -786,6 +804,7 @@ cmd_update() {
         printf '%s\n' "$latest" >> "$skip"
         fail update "на ядре $latest каналы не поднялись, вернул ${prev#openflux-}; этот релиз больше не ставлю"
     fi
+    mark_managed "$latest"
     install_self "$work/node-install.sh" || true
     # Keep the previous core for a manual rollback, drop the older ones.
     for old in "$BIN_DIR"/openflux-node-v*; do
@@ -807,6 +826,23 @@ cmd_set_cookies() {
     printf '{"ok":true,"channel":"%s"}\n' "$CHANNEL"
 }
 
+# autoupdate on|off: turns the core updater on or off for the whole server,
+# e.g. on channels installed before the wizard offered it.
+cmd_autoupdate() {
+    [ "$(id -u)" = 0 ] || fail autoupdate "нужны права root (sudo)"
+    case "${1:-}" in
+        on)
+            [ -n "$(list_channels)" ] || fail autoupdate "на сервере нет каналов OpenFlux"
+            AUTOUPDATE=yes ;;
+        off) AUTOUPDATE=no ;;
+        *) fail usage "usage: node-install.sh autoupdate on|off" ;;
+    esac
+    apply_autoupdate || fail autoupdate "не удалось включить openflux-node-update.timer"
+    state=false
+    autoupdate_on && state=true
+    printf '{"ok":true,"autoupdate":%s}\n' "$state"
+}
+
 cmd_status() {
     read_config
     check_channel
@@ -824,5 +860,6 @@ case "${1:-}" in
     upgrade) cmd_upgrade ;;
     set-cookies) shift; cmd_set_cookies "$@" ;;
     update) cmd_update ;;
-    *) fail usage "usage: node-install.sh probe|plan|apply|remove|status|upgrade|set-cookies|update" ;;
+    autoupdate) shift; cmd_autoupdate "$@" ;;
+    *) fail usage "usage: node-install.sh probe|plan|apply|remove|status|upgrade|set-cookies|update|autoupdate" ;;
 esac

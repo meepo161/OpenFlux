@@ -106,6 +106,11 @@ func TestInstallOnVDS(t *testing.T) {
 	if err != nil || p.Sudo != "root" || !p.Systemd {
 		t.Fatalf("root probe: %+v %v", p, err)
 	}
+	// A core some other installer left, named like a newer release of this
+	// repository (an old fork's node-v1.4.0), must not be kept.
+	if _, _, err := c.run("cd /opt/openflux-node/bin && cp openflux-node-v1.0.1 openflux-node-v1.4.0 && ln -sfn openflux-node-v1.4.0 openflux", nil); err != nil {
+		t.Fatal(err)
+	}
 	c.Close()
 
 	d := Target{Host: host, Port: port, User: user, Password: userPass, HostKey: root.HostKey}
@@ -131,6 +136,9 @@ func TestInstallOnVDS(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("plan: %+v", plan)
+	if plan.Core != "node-v1.0.1" {
+		t.Fatalf("plan keeps a core this script did not install: %s", plan.Core)
+	}
 	if actions := strings.Join(plan.Actions, "\n"); !strings.Contains(actions, "Яндекс Документ, Mail.ru Документ, cups.online и direct") ||
 		!strings.Contains(actions, "Включить автообновление") {
 		t.Fatalf("plan actions: %s", actions)
@@ -245,6 +253,13 @@ func TestInstallOnVDS(t *testing.T) {
 	}
 	if out := update(); !strings.Contains(out, `"skipped":"node-v1.2.0"`) {
 		t.Fatalf("a rolled back release must not be tried again: %s", out)
+	}
+	if out := sudo("sh /opt/openflux-node/node-install.sh autoupdate off; systemctl is-enabled openflux-node-update.timer"); !strings.Contains(out, `"autoupdate":false`) {
+		t.Fatalf("autoupdate off: %s", out)
+	}
+	if out := sudo("sh " + c.script + " autoupdate on; systemctl is-enabled openflux-node-update.timer"); !strings.HasSuffix(out, "enabled") ||
+		!strings.Contains(out, `"autoupdate":true`) {
+		t.Fatalf("autoupdate on: %s", out)
 	}
 	// An app with an older pinned script must not take the server back.
 	older, err := c.Plan(Channel{ID: "other"}, false)
