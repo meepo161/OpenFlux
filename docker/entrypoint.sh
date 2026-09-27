@@ -29,7 +29,11 @@ case "$transport" in
     ;;
 esac
 
-set -- "--$role" --transport "$transport"
+core_role=client
+if [ "$role" = exit-node ]; then
+  core_role=exit
+fi
+set -- --role "$core_role" --transport "$transport"
 
 if [ "$role" = client ]; then
   set -- "$@" --socks5 "$listen"
