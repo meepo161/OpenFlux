@@ -583,6 +583,7 @@ Measure raw goodput through the transport, without touching the host network:
 | `--socks5` | `-s` | `:1080` | SOCKS5 listen address |
 | `--http-proxy` | | | Also serve an HTTP proxy (CONNECT + plain requests) on this address |
 | `--local-ip` | `-l` | (auto) | Egress IP for l3 SNAT / RST filter |
+| `--upstream-proxy` | | | l4 exit: open TCP connections through this SOCKS5 proxy (`127.0.0.1:10808`, `socks5://user:pass@host:port`), e.g. an xray inbound with its own routing. Implies `--mode=l4`; UDP still leaves the exit directly |
 | `--debug` | `-d`, `-dd`, `-ddd` | `0` | `1`: one line per packet (`-> 52 bytes - UDP ...`); `2`: plus operational logs; `3`: plus hexdumps |
 | `--sensitive` | | `false` | Also log key material and, with `-ddd`, plaintext frames (cookie jars, tokens) |
 | `--encryption-key-file` | | | AES-256-GCM shared secret file |

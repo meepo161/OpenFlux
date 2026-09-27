@@ -575,6 +575,7 @@ URL = YOUR_YANDEX_DOC_URL
 | `--socks5` | `-s` | `:1080` | Адрес SOCKS5-прокси |
 | `--http-proxy` | | | Дополнительно поднять HTTP-прокси (CONNECT + обычные запросы) на этом адресе |
 | `--local-ip` | `-l` | (авто) | Egress IP для l3 SNAT / фильтра RST |
+| `--upstream-proxy` | | | Exit l4: открывать TCP-соединения через этот SOCKS5-прокси (`127.0.0.1:10808`, `socks5://user:pass@host:port`), например inbound xray со своей маршрутизацией. Включает `--mode=l4`; UDP по-прежнему уходит с exit напрямую |
 | `--debug` | `-d`, `-dd`, `-ddd` | `0` | `1`: строка на каждый пакет (`-> 52 bytes - UDP ...`); `2`: плюс рабочие логи; `3`: плюс hexdump |
 | `--sensitive` | | `false` | Ещё и ключи, а с `-ddd` — расшифрованные фреймы (куки, токены) |
 | `--encryption-key-file` | | | Файл с общим секретом для AES-256-GCM |

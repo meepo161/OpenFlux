@@ -197,6 +197,7 @@ func (t *TCPTunnel) handleExitUDP(r *udp.ForwarderRequest) bool {
 		return true
 	}
 	local := gonet.NewUDPConn(&wq, ep)
+	noteUDPBypassesUpstream()
 	remote, err := net.DialTimeout("udp", dest, 10*time.Second)
 	if err != nil {
 		utils.Debugf("[EXIT] UDP dial %s failed: %v", dest, err)
@@ -256,7 +257,7 @@ func (t *TCPTunnel) handleExitTCP(r *tcp.ForwarderRequest) {
 	local := gonet.NewTCPConn(&wq, ep)
 
 	utils.SafeGo("exit.flow", func() {
-		remote, err := net.DialTimeout("tcp", dest, 10*time.Second)
+		remote, err := dialExitTCP(dest)
 		if err != nil {
 			utils.Debugf("[EXIT] dial %s failed: %v", dest, err)
 			local.Close()

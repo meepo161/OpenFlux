@@ -249,6 +249,7 @@ func main() {
 		"Path to the Unix domain socket used by the mobile app to talk to the core. "+
 			"Empty = no IPC server.")
 	socksAddr := flag.String("socks5", ":1080", "SOCKS5 address")
+	upstreamProxy := flag.String("upstream-proxy", "", "Exit (l4): open TCP connections through this SOCKS5 proxy, e.g. 127.0.0.1:10808 or socks5://user:pass@host:port")
 	httpProxyAddr := flag.String("http-proxy", "", "Client: also serve an HTTP proxy (CONNECT and plain requests) on this address, through the same tunnel")
 	flag.StringVar(&localIP, "local-ip", "", "Egress IP for exit node (l3 mode only, scoped RST drop)")
 
@@ -512,6 +513,25 @@ DEPRECATED (removed in v2)
 	}
 	if *mode == "" {
 		*mode = "l3"
+		// Only the l4 exit dials its own connections, so only it can use
+		// an upstream proxy.
+		if *role == roleExit && *upstreamProxy != "" {
+			*mode = "l4"
+		}
+	}
+	if *upstreamProxy != "" {
+		if *role != roleExit {
+			log.Fatal("--upstream-proxy applies to --role=exit only")
+		}
+		if *mode != "l4" {
+			log.Fatal("--upstream-proxy needs --mode=l4: an l3 exit forwards packets and dials nothing itself")
+		}
+		if err := tunnel.SetExitUpstream(*upstreamProxy); err != nil {
+			log.Fatalf("--upstream-proxy: %v", err)
+		}
+		if addr := tunnel.ExitUpstream(); addr != "" {
+			log.Printf("Exit TCP goes through SOCKS5 %s", addr)
+		}
 	}
 
 	if *codec != codecBatched && *codec != codecLegacy {
