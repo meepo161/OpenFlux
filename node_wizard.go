@@ -21,13 +21,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"strconv"
 	"strings"
 	"time"
 
 	"openflux/provision"
-	"openflux/share"
+	"openflux/transport/cupsonline"
 	"openflux/transport/yandex"
 )
 
@@ -53,6 +51,23 @@ type wizardParams struct {
 	SudoPassword string `json:"sudoPassword"`
 	Cookies      string `json:"cookies"`
 	Name         string `json:"name"`
+	// Transports are the channel's carriers besides direct. Without them,
+	// DocumentURL alone means a Yandex document (older apps).
+	Transports []provision.ChannelTransport `json:"transports"`
+	AutoUpdate bool                         `json:"autoUpdate"`
+}
+
+// transports is the channel's carriers from the request.
+func (p wizardParams) transports() []provision.ChannelTransport {
+	if p.Transports == nil && p.DocumentURL != "" {
+		return []provision.ChannelTransport{{Type: "vyandex", URL: p.DocumentURL}}
+	}
+	return p.Transports
+}
+
+// channel is the channel the request describes, key and cookies aside.
+func (p wizardParams) channel() provision.Channel {
+	return provision.Channel{ID: p.Channel, Transports: p.transports(), Port: p.ChannelPort, AutoUpdate: p.AutoUpdate}
 }
 
 // nodeWizard holds the SSH connection between calls.
@@ -62,6 +77,7 @@ type nodeWizard struct {
 	dial      func(context.Context, provision.Target) (*provision.Conn, error)
 	checkDoc  func(string) (yandex.VolgaDocument, error)
 	newScript func() provision.Script
+	newRooms  func(context.Context) (string, error)
 }
 
 func newNodeWizard() *nodeWizard {
@@ -69,6 +85,7 @@ func newNodeWizard() *nodeWizard {
 		dial:      provision.Dial,
 		checkDoc:  func(u string) (yandex.VolgaDocument, error) { return yandex.CheckVolgaDocument(u, nil) },
 		newScript: provision.Pinned,
+		newRooms:  cupsonline.CreateRoomList,
 	}
 }
 
@@ -143,7 +160,7 @@ func (w *nodeWizard) handle(req wizardRequest) map[string]interface{} {
 		if err != nil {
 			return wizardFailure(err, nil)
 		}
-		plan, err := conn.Plan(p.Channel, p.ChannelPort, p.WithCookies)
+		plan, err := conn.Plan(p.channel(), p.WithCookies)
 		if err != nil {
 			return wizardFailure(err, nil)
 		}
@@ -153,9 +170,10 @@ func (w *nodeWizard) handle(req wizardRequest) map[string]interface{} {
 		if err != nil {
 			return wizardFailure(err, nil)
 		}
-		ch := provision.Channel{ID: p.Channel, URL: p.DocumentURL, Key: p.Key, Port: p.ChannelPort}
+		ch := p.channel()
+		ch.Key = p.Key
 		if p.Cookies != "" {
-			if ch.Cookies, _, err = provision.CookieStore(p.DocumentURL, p.Cookies); err != nil {
+			if ch.Cookies, err = provision.ChannelCookies(ch.Transports, p.Cookies); err != nil {
 				return wizardFailure(err, nil)
 			}
 		}
@@ -190,8 +208,16 @@ func (w *nodeWizard) handle(req wizardRequest) map[string]interface{} {
 		return wizardOK(map[string]interface{}{"signedIn": err == nil && signedIn})
 	case "checkDocument":
 		return w.checkDocument(p.DocumentURL)
+	case "createRooms":
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		rooms, err := w.newRooms(ctx)
+		if err != nil {
+			return wizardFailure(fmt.Errorf("не удалось создать комнаты cups.online: %v", err), nil)
+		}
+		return wizardOK(map[string]interface{}{"rooms": rooms})
 	case "shareLink":
-		link, err := nodeShareLink(p.Name, p.DocumentURL, p.Key, p.Host, p.ChannelPort)
+		link, err := provision.ShareLink(p.Name, p.Key, p.Host, p.ChannelPort, p.transports())
 		if err != nil {
 			return wizardFailure(err, nil)
 		}
@@ -278,23 +304,4 @@ func (w *nodeWizard) checkDocument(documentURL string) map[string]interface{} {
 		return wizardFailure(errors.New("по ссылке документ открывается только на просмотр, нужен доступ на редактирование"), nil)
 	}
 	return wizardOK(map[string]interface{}{"editable": true})
-}
-
-// nodeShareLink is the openflux:// link of a new channel, as the wizard
-// builds it: the Yandex document first, direct to host:port as the backup.
-// It carries the channel key.
-func nodeShareLink(name, documentURL, key, host string, port int) (string, error) {
-	if host == "" || port <= 0 || port > 65535 {
-		return "", errors.New("нет адреса или порта ноды")
-	}
-	return share.Encode(share.Config{
-		Name:      name,
-		Negotiate: true,
-		Secret:    key,
-		Context:   documentURL,
-		Transports: []share.Transport{
-			{Type: "vyandex", URL: documentURL, Priority: 100},
-			{Type: "direct", Dial: net.JoinHostPort(host, strconv.Itoa(port)), Priority: 50},
-		},
-	})
 }

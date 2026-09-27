@@ -177,7 +177,15 @@ RSTs generated locally by the exit-node kernel.
   protocol (one object per line) for a desktop app to provision a new exit
   node over SSH non-interactively: it drives `provision/` to connect, has the
   VDS download and verify a pinned, hash-checked install script, and returns
-  the finished node's `openflux://` link. Secrets (SSH/sudo passwords, the
+  the finished node's `openflux://` link. A channel carries any mix of a
+  Yandex document, a Mail.ru public document and cups.online rooms (the
+  wizard creates them), with direct always as the backup. Optionally
+  `openflux-node-update.timer` keeps the server's core on the newest
+  `node-v*` release: every 6 hours it checks GitHub, verifies the core
+  against the release's own `node-install.sh` and `SHA256SUMS`, restarts
+  the channels and rolls back (and skips that release) if one does not stay
+  up. `repo=owner/name` in `/etc/openflux-node/update.conf` points it at
+  another repository's releases. Secrets (SSH/sudo passwords, the
   private key, the channel key) only ever travel on stdin, never on the
   command line or in a log.
 - **Legacy codec** - `--codec=legacy` reverts to the old per-packet LZ4 codec

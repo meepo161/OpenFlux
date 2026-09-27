@@ -442,6 +442,23 @@ func createRooms(ctx context.Context, baseURL string, n int, pause time.Duration
 	return out, nil
 }
 
+// CreateRoomList creates new rooms, as an exit started without a room list
+// does, and returns their packed list for --url. The "Своя нода" wizard
+// creates them from the app so the node starts with the list in its config
+// and keeps the same rooms, and the same link, across restarts.
+func CreateRoomList(ctx context.Context) (string, error) {
+	cfg := DefaultCupsonlineConfig()
+	auths, err := createRooms(ctx, baseRoomURL, cfg.NumRooms, cfg.RoomCreatePause)
+	if err != nil {
+		return "", err
+	}
+	ids := make([]string, len(auths))
+	for i, a := range auths {
+		ids[i] = a.roomUUID
+	}
+	return packRooms(ids), nil
+}
+
 func packRooms(ids []string) string {
 	raw, _ := json.Marshal(ids)
 	return base64.RawURLEncoding.EncodeToString(raw)

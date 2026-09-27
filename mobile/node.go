@@ -13,14 +13,13 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"openflux/provision"
-	"openflux/share"
 	"openflux/transport"
+	"openflux/transport/cupsonline"
 	"openflux/transport/yandex"
 	"openflux/tunnel"
 )
@@ -130,14 +129,33 @@ func NodeNewChannel() string {
 	return result(map[string]interface{}{"id": id, "key": key})
 }
 
+// nodeTransports decodes the channel's carriers besides direct:
+// [{"type": "vyandex"|"mailru"|"cupsonline", "url": ...}], "" or [] for
+// direct only.
+func nodeTransports(transportsJSON string) ([]provision.ChannelTransport, error) {
+	var ts []provision.ChannelTransport
+	if strings.TrimSpace(transportsJSON) == "" {
+		return nil, nil
+	}
+	if err := json.Unmarshal([]byte(transportsJSON), &ts); err != nil {
+		return nil, errors.New("неверный список транспортов")
+	}
+	return provision.CheckTransports(ts)
+}
+
 // NodePlan asks the VDS what installing the channel would change: {"plan"}.
-// withCookies: the Yandex sign-in goes to the node too.
-func NodePlan(channel string, port int, withCookies bool) string {
+// transportsJSON: the carriers (see nodeTransports); withCookies: the Yandex
+// sign-in goes to the node too; autoUpdate: the server's core updater.
+func NodePlan(channel string, port int, transportsJSON string, withCookies, autoUpdate bool) string {
 	conn, err := nodeConn()
 	if err != nil {
 		return failure(err, nil)
 	}
-	plan, err := conn.Plan(channel, port, withCookies)
+	ts, err := nodeTransports(transportsJSON)
+	if err != nil {
+		return failure(err, nil)
+	}
+	plan, err := conn.Plan(provision.Channel{ID: channel, Port: port, Transports: ts, AutoUpdate: autoUpdate}, withCookies)
 	if err != nil {
 		return failure(err, nil)
 	}
@@ -147,16 +165,20 @@ func NodePlan(channel string, port int, withCookies bool) string {
 // NodeApply installs and starts the channel. sudoPassword is only used when
 // the account needs one; a wrong one comes back with "sudo": true.
 // cookieHeader is the Yandex sign-in for the node ("" for none): the node
-// then opens the document as that account, which gets it past the checks
-// Yandex shows a server's address.
-func NodeApply(channel, documentURL, key string, port int, sudoPassword, cookieHeader string) string {
+// then opens the Yandex document as that account, which gets it past the
+// checks Yandex shows a server's address.
+func NodeApply(channel, transportsJSON, key string, port int, autoUpdate bool, sudoPassword, cookieHeader string) string {
 	conn, err := nodeConn()
 	if err != nil {
 		return failure(err, nil)
 	}
-	ch := provision.Channel{ID: channel, URL: documentURL, Key: key, Port: port}
+	ts, err := nodeTransports(transportsJSON)
+	if err != nil {
+		return failure(err, nil)
+	}
+	ch := provision.Channel{ID: channel, Transports: ts, Key: key, Port: port, AutoUpdate: autoUpdate}
 	if cookieHeader != "" {
-		if ch.Cookies, _, err = provision.CookieStore(documentURL, cookieHeader); err != nil {
+		if ch.Cookies, err = provision.ChannelCookies(ts, cookieHeader); err != nil {
 			return failure(err, nil)
 		}
 	}
@@ -365,19 +387,29 @@ func fetchIP(ctx context.Context, trans transport.Transport) (string, error) {
 	return "", lastErr
 }
 
+// NodeCreateCupsRooms creates cups.online rooms for a new channel's
+// config: {"rooms"}, the packed list. The node starts with them, so its
+// link stays the same across restarts.
+func NodeCreateCupsRooms() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	rooms, err := cupsonline.CreateRoomList(ctx)
+	if err != nil {
+		return failure(fmt.Errorf("не удалось создать комнаты cups.online: %v", err), nil)
+	}
+	appendLog("[NODE] Созданы комнаты cups.online для канала")
+	return result(map[string]interface{}{"rooms": rooms})
+}
+
 // NodeShareLink returns the openflux:// link of a new channel: the Session
-// profile a client needs (Yandex document first, direct to host:port as the
-// backup). The app saves it through the same import path as a scanned QR,
-// and shows it as a QR for another device. It carries the channel key.
-func NodeShareLink(name, documentURL, key, host string, port int) (string, error) {
-	return share.Encode(share.Config{
-		Name:      name,
-		Negotiate: true,
-		Secret:    key,
-		Context:   documentURL,
-		Transports: []share.Transport{
-			{Type: "vyandex", URL: documentURL, Priority: 100},
-			{Type: "direct", Dial: net.JoinHostPort(host, strconv.Itoa(port)), Priority: 50},
-		},
-	})
+// profile a client needs (its carriers from transportsJSON, see
+// nodeTransports, and direct to host:port as the backup). The app saves it
+// through the same import path as a scanned QR, and shows it as a QR for
+// another device. It carries the channel key.
+func NodeShareLink(name, transportsJSON, key, host string, port int) (string, error) {
+	ts, err := nodeTransports(transportsJSON)
+	if err != nil {
+		return "", err
+	}
+	return provision.ShareLink(name, key, host, port, ts)
 }
