@@ -454,6 +454,9 @@ DEPRECATED (removed in v2)
 					"exit":  isExit,
 				}
 			}
+			if spec.Type == "cupsonline" {
+				spec.Params = map[string]interface{}{"exit": isExit}
+			}
 			confTransports = append(confTransports, spec)
 		}
 	}
@@ -623,7 +626,8 @@ DEPRECATED (removed in v2)
 			urls["yandex"] = globalDocUrl
 		}
 		extra := map[string]map[string]interface{}{
-			"oneme": {"token": *onemeToken, "uid": *onemeUID, "exit": isExit},
+			"oneme":      {"token": *onemeToken, "uid": *onemeUID, "exit": isExit},
+			"cupsonline": {"exit": isExit},
 			"direct": {
 				"dial":    *directDial,
 				"listen":  *directListen,
@@ -647,6 +651,9 @@ DEPRECATED (removed in v2)
 			specs[0].Params = map[string]interface{}{
 				"dial": *directDial, "listen": *directListen, "is_exit": isExit,
 			}
+		}
+		if *transportType == "cupsonline" {
+			specs[0].Params = map[string]interface{}{"exit": isExit}
 		}
 	}
 
