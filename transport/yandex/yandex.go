@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	mrand "math/rand/v2"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -367,19 +368,42 @@ func (t *YandexDocsTransport) writerLoop() {
 	}
 }
 
-func (t *YandexDocsTransport) keepAliveLoop() {
-	ticker := time.NewTicker(t.GetConfig().KeepAliveInterval)
-	defer ticker.Stop()
-	keepAliveMsg := `42["message",{"type":"cursor","cursor":"18;---KA---"}]`
+// Keepalives of one size at one interval are a signature that survives
+// TLS. They now come at 0.5-1.5x the configured interval and carry random
+// padding after the marker; peers find the marker with strings.Contains, so
+// older nodes still recognize them (#81).
+const keepAliveMarker = "---KA---"
 
+const keepAlivePadAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+func keepAliveMessage() string {
+	pad := make([]byte, 4+mrand.IntN(48))
+	for i := range pad {
+		pad[i] = keepAlivePadAlphabet[mrand.IntN(len(keepAlivePadAlphabet))]
+	}
+	return `42["message",{"type":"cursor","cursor":"18;` + keepAliveMarker + string(pad) + `"}]`
+}
+
+func keepAliveDelay(interval time.Duration) time.Duration {
+	if interval <= 0 {
+		return interval
+	}
+	return interval/2 + time.Duration(mrand.Int64N(int64(interval)))
+}
+
+func (t *YandexDocsTransport) keepAliveLoop() {
 	for t.IsRunning() {
-		<-ticker.C
+		select {
+		case <-time.After(keepAliveDelay(t.GetConfig().KeepAliveInterval)):
+		case <-t.Done():
+			return
+		}
 		t.Mu.Lock()
 		session := t.session
 		t.Mu.Unlock()
 
 		if session != nil && session.Conn != nil {
-			if err := session.safeWrite(websocket.TextMessage, []byte(keepAliveMsg)); err != nil {
+			if err := session.safeWrite(websocket.TextMessage, []byte(keepAliveMessage())); err != nil {
 				utils.Debugf("[YDOCS] Keep-alive failed: %v", err)
 				t.SetConnected(false)
 			}
@@ -390,7 +414,7 @@ func (t *YandexDocsTransport) keepAliveLoop() {
 func (t *YandexDocsTransport) handleMessage(session *DocSession, data []byte) {
 	text := string(data)
 
-	if strings.Contains(text, "---KA---") {
+	if strings.Contains(text, keepAliveMarker) {
 		return
 	}
 
