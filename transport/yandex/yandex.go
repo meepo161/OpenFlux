@@ -152,6 +152,15 @@ func (t *YandexDocsTransport) Send(data []byte) error {
 	}
 }
 
+// fetchDocInfo is replaced in tests.
+var fetchDocInfo = (*YandexDocsTransport).fetchDocInfo
+
+// nextUserID returns a document participant id not used by this transport
+// before.
+func (t *YandexDocsTransport) nextUserID() string {
+	return t.baseUserID + fmt.Sprintf("%03d", t.userCounter.Add(1)%1000)
+}
+
 func (t *YandexDocsTransport) connectToDoc(attempt int) {
 	if !t.IsRunning() {
 		return
@@ -169,15 +178,14 @@ func (t *YandexDocsTransport) connectToDoc(attempt int) {
 		existingSession := t.session
 		t.Mu.Unlock()
 
-		var userID string
-		if existingSession != nil {
-			userID = existingSession.UserID
-		} else {
-			suffix := fmt.Sprintf("%03d", t.userCounter.Add(1)%1000)
-			userID = t.baseUserID + suffix
-		}
+		// A fresh participant id on every attempt: after a drop (4007) the
+		// old participant lingers on Yandex's side for seconds, and joining
+		// again under its id is refused right after CONNECT with close 1005,
+		// which turned one routine drop into 30-120 s of reconnects. The
+		// write queue is still carried over below.
+		userID := t.nextUserID()
 
-		info, err := t.fetchDocInfo(t.url, userID)
+		info, err := fetchDocInfo(t, t.url, userID)
 		if err != nil {
 			if errors.Is(err, ErrCaptchaRequired) || errors.Is(err, ErrLoginRequired) {
 				utils.Debugf("[YDOCS] fetchDocInfo needs external help: %v", err)
