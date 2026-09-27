@@ -214,14 +214,26 @@ func (t *YandexDocsTransport) connectToDoc(attempt int) {
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
 		}
+		// Join the engine.io session by long polling first; strict balancers
+		// refuse a bare websocket (#31). Lenient ones still get a direct dial
+		// if polling fails.
+		wsURL, cookies := info.WsURL, info.CookieStr
+		sid, pollCookies, perr := engineIOPoll(info)
+		if perr == nil {
+			wsURL += "&sid=" + sid
+			cookies = pollCookies
+		} else {
+			utils.Debugf("[YDOCS] engine.io polling failed, dialing the websocket directly: %v", perr)
+		}
+
 		headers := http.Header{}
 		headers.Set("User-Agent", "Mozilla/5.0")
 		headers.Set("Origin", info.Origin)
-		headers.Set("Cookie", info.CookieStr)
+		headers.Set("Cookie", cookies)
 		headers.Set("Host", info.Host)
 
-		utils.Debugf("[YDOCS] WebSocket dial %s", info.WsURL)
-		conn, resp, err := dialer.Dial(info.WsURL, headers)
+		utils.Debugf("[YDOCS] WebSocket dial %s", shortStr(wsURL, 120))
+		conn, resp, err := dialer.Dial(wsURL, headers)
 		if err != nil {
 			status := 0
 			if resp != nil {
@@ -232,6 +244,18 @@ func (t *YandexDocsTransport) connectToDoc(attempt int) {
 			return
 		}
 		utils.Debugf("[YDOCS] WebSocket connected to %s", info.Host)
+
+		if perr == nil {
+			err = engineIOProbe(conn, 10*time.Second)
+		} else {
+			err = engineIOAwaitOpen(conn, 10*time.Second)
+		}
+		if err != nil {
+			utils.Debugf("[YDOCS] engine.io handshake failed: %v", err)
+			conn.Close()
+			t.scheduleReconnect(attempt)
+			return
+		}
 
 		writeQueue := make(chan []byte, t.GetConfig().MaxQueueSize)
 		if existingSession != nil {
