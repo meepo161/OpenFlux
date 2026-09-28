@@ -47,16 +47,17 @@ set -u
 umask 077
 
 CORE_VERSION="node-v1.0.1"
-CORE_BASE="https://github.com/p1neappleXpress/OpenFlux/releases/download/$CORE_VERSION"
 SHA_amd64="9fa157550d2c20c0bc03c12823b4ad0140ba070199b5548eacf98c5a2cca6cb8"
 SHA_arm64="325335fa416d2f87cba84c5a85d865c596169cd79c7f4cfc916cd67a88612886"
 SHA_arm="7f280b01a53bee33e84a7525e035f1e09f51e9070b612b903e492c45c6edf300"
-# Where the updater looks for newer node-v* releases. UPDATE_CONF may
-# override it with a "repo=owner/name" line.
+# The repository this script and its core come from: the core is one of its
+# node-v* releases, and the updater follows them (UPDATE_CONF may override
+# that with a "repo=owner/name" line).
 RELEASE_REPO="p1neappleXpress/OpenFlux"
 GITHUB_API="https://api.github.com"
 GITHUB_RAW="https://raw.githubusercontent.com"
 GITHUB_WEB="https://github.com"
+CORE_BASE="$GITHUB_WEB/$RELEASE_REPO/releases/download/$CORE_VERSION"
 
 BIN_DIR="/opt/openflux-node/bin"
 CONF_ROOT="/etc/openflux-node"
@@ -175,27 +176,29 @@ installed_core() {
     esac
 }
 
-# managed_core: installed_core, if this script or the updater put it there
-# (BIN_DIR/.managed lists those). A core from anywhere else, such as an old
-# fork's node-v1.4.0 whose number says nothing about this repository's
-# releases, counts as none.
+# managed_core REPO: installed_core, if this script or the updater put it
+# there from REPO's releases (BIN_DIR/.managed lists "repo tag" lines).
+# A core from anywhere else counts as none: another repository's release
+# numbers, like an old fork's node-v1.4.0, say nothing about REPO's.
 managed_core() {
     cur=$(installed_core)
-    [ -n "$cur" ] && grep -qsxF "$cur" "$BIN_DIR/.managed" && printf '%s' "$cur"
+    [ -n "$cur" ] && grep -qsxF "$1 $cur" "$BIN_DIR/.managed" && printf '%s' "$cur"
     return 0
 }
 
+# mark_managed REPO TAG: BIN_DIR/openflux-TAG is REPO's release now.
 mark_managed() {
-    grep -qsxF "$1" "$BIN_DIR/.managed" || printf '%s\n' "$1" >> "$BIN_DIR/.managed"
+    { grep -sv " $2\$" "$BIN_DIR/.managed"; printf '%s %s\n' "$1" "$2"; } > "$BIN_DIR/.managed.new" \
+        && mv -f "$BIN_DIR/.managed.new" "$BIN_DIR/.managed"
     # A plain user's plan reads it too.
     chmod 0644 "$BIN_DIR/.managed"
 }
 
 # core_to_use: this script's core, or the installed one when the updater has
-# already moved the server to a newer release (an older app must not
-# downgrade every channel).
+# already moved the server to a newer release of the same repository (an
+# older app must not downgrade every channel).
 core_to_use() {
-    cur=$(managed_core)
+    cur=$(managed_core "$RELEASE_REPO")
     if [ -n "$cur" ] && version_gt "$cur" "$CORE_VERSION"; then printf '%s' "$cur"; else printf '%s' "$CORE_VERSION"; fi
 }
 
@@ -367,10 +370,12 @@ cmd_plan() {
     core=$(core_to_use)
     set --
     id "$NODE_USER" >/dev/null 2>&1 || set -- "$@" "Создать системного пользователя $NODE_USER (без входа и домашней папки)"
-    if [ -x "$BIN_DIR/openflux-$core" ]; then
-        set -- "$@" "Использовать уже установленное ядро OpenFlux $core"
+    # The installed file counts only if it is this release of RELEASE_REPO
+    # (another repository may have a release with the same number).
+    if [ "$core" != "$CORE_VERSION" ] || { [ -x "$BIN_DIR/openflux-$core" ] && [ "$(sha256_of "$BIN_DIR/openflux-$core")" = "$(core_sha "$arch")" ]; }; then
+        set -- "$@" "Использовать уже установленное ядро OpenFlux $core ($RELEASE_REPO)"
     else
-        set -- "$@" "Скачать ядро OpenFlux $core (linux-$arch) с GitHub и сверить SHA-256 в $BIN_DIR"
+        set -- "$@" "Скачать ядро OpenFlux $core (linux-$arch) из релизов $RELEASE_REPO на GitHub и сверить SHA-256 в $BIN_DIR"
     fi
     set -- "$@" "Создать $CONF_ROOT/$CHANNEL: node.conf и ключ шифрования канала (права 0640)"
     [ -n "$COOKIES" ] && set -- "$@" "Сохранить вход в Яндекс для этого канала в $STATE_ROOT/$CHANNEL/cookies.json (права 0600, только для ноды)"
@@ -447,7 +452,7 @@ install_core() {
         CREATED_BIN=1
     fi
     ln -sfn "openflux-$CORE_VERSION" "$BIN_DIR/openflux"
-    mark_managed "$CORE_VERSION"
+    mark_managed "$RELEASE_REPO" "$CORE_VERSION"
 }
 
 write_unit() {
@@ -485,10 +490,18 @@ EOF
 # script_core FILE: the CORE_VERSION a copy of this script pins.
 script_core() { sed -n 's/^CORE_VERSION="\(node-v[0-9.]*\)"$/\1/p' "$1" 2>/dev/null | head -n 1; }
 
+# script_repo FILE: the RELEASE_REPO a copy of this script follows.
+script_repo() { sed -n 's/^RELEASE_REPO="\([^"]*\)"$/\1/p' "$1" 2>/dev/null | head -n 1; }
+
 # install_self FILE: makes FILE the script the updater runs, unless the copy
-# there already pins a newer core (the updater put a newer release's script).
+# there follows the same repository and already pins a newer core (the
+# updater put a newer release's script). A script from another repository
+# always replaces it: the server now runs that repository's core.
 install_self() {
-    if [ -f "$SELF_COPY" ] && version_gt "$(script_core "$SELF_COPY")" "$(script_core "$1")"; then return 0; fi
+    if [ -f "$SELF_COPY" ] && [ "$(script_repo "$SELF_COPY")" = "$(script_repo "$1")" ] &&
+        version_gt "$(script_core "$SELF_COPY")" "$(script_core "$1")"; then
+        return 0
+    fi
     mkdir -p /opt/openflux-node && chmod 0755 /opt/openflux-node || return 1
     tmp=$(mktemp /opt/openflux-node/.node-install.XXXXXX) || return 1
     if cat "$1" > "$tmp" && chmod 0755 "$tmp" && mv -f "$tmp" "$SELF_COPY"; then return 0; fi
@@ -757,7 +770,7 @@ cmd_update() {
     arch=$(detect_arch)
     [ -n "$arch" ] || fail update "архитектура $(uname -m) не поддерживается"
     repo=$(release_repo)
-    current=$(managed_core)
+    current=$(managed_core "$repo")
     work=$(mktemp -d /tmp/openflux-node-update.XXXXXX) || fail update "не удалось создать временную папку"
     trap 'rm -rf "$work"' EXIT
     fetch "$GITHUB_API/repos/$repo/releases?per_page=30" "$work/releases.json" \
@@ -804,7 +817,7 @@ cmd_update() {
         printf '%s\n' "$latest" >> "$skip"
         fail update "на ядре $latest каналы не поднялись, вернул ${prev#openflux-}; этот релиз больше не ставлю"
     fi
-    mark_managed "$latest"
+    mark_managed "$repo" "$latest"
     install_self "$work/node-install.sh" || true
     # Keep the previous core for a manual rollback, drop the older ones.
     for old in "$BIN_DIR"/openflux-node-v*; do

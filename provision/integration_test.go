@@ -61,6 +61,9 @@ func TestInstallOnVDS(t *testing.T) {
 	gh.add("node-v1.0.1", gh.good)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/node-install.sh", func(w http.ResponseWriter, _ *http.Request) { w.Write(script) })
+	// The same script following another repository, like a fork's.
+	otherRepo := regexp.MustCompile(`(?m)^RELEASE_REPO=.*$`).ReplaceAll(script, []byte(`RELEASE_REPO="someone/OpenFlux"`))
+	mux.HandleFunc("/other-install.sh", func(w http.ResponseWriter, _ *http.Request) { w.Write(otherRepo) })
 	mux.Handle("/", gh)
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(ln)
@@ -266,6 +269,17 @@ func TestInstallOnVDS(t *testing.T) {
 	if err != nil || older.Core != "node-v1.1.0" {
 		t.Fatalf("plan after an update: %+v %v", older, err)
 	}
+	// A script from another repository does not keep this one's release,
+	// however new: the server moves to that repository's core.
+	pinned := c.script
+	if err := c.FetchScript(Script{URL: base + "/other-install.sh", SHA256: ScriptHash(otherRepo)}); err != nil {
+		t.Fatal(err)
+	}
+	switched, err := c.Plan(Channel{ID: "other"}, false)
+	if err != nil || switched.Core != "node-v1.0.1" || !strings.Contains(strings.Join(switched.Actions, "\n"), "someone/OpenFlux") {
+		t.Fatalf("plan from another repository: %+v %v", switched, err)
+	}
+	c.script = pinned
 
 	if err := c.Remove(id, userPass); err != nil {
 		t.Fatal(err)
