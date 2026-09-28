@@ -289,7 +289,8 @@ func NodeVerify(specsJSON, secret, expectHost string, timeoutSec int) string {
 	}
 
 	appendLog("[NODE] Проверка канала: подключение")
-	trans, sess, err := buildSessionWith(specsJSON, secret, false)
+	// Strict: the check is that the new node answers the Session.
+	trans, sess, err := buildSessionWith(specsJSON, secret, false, sessionOptions{strict: true})
 	if err != nil {
 		return failure(err, nil)
 	}

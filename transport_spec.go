@@ -65,14 +65,14 @@ func buildTransportSpecs(specs []transportSpec, urls map[string]string, extra ma
 // makeRawTransport builds a raw transport from a spec without the Manager's
 // factory (bootstrap path). The Manager's factory is only used for transports
 // added later via SubtypeTransportStart.
-func makeRawTransport(spec transportSpec, baseCfg transport.TransportConfig) (transport.Transport, error) {
+func makeRawTransport(spec transportSpec, baseCfg transport.TransportConfig, isExit bool) (transport.Transport, error) {
 	cfg := &control.TransportConfig{
 		Name:   spec.Name,
 		Type:   spec.Type,
 		URL:    spec.URL,
 		Params: spec.Params,
 	}
-	return transportFactory(baseCfg)(cfg)
+	return transportFactory(baseCfg, isExit)(cfg)
 }
 
 // registerBootstrapTransports wires every spec into the manager, and also
@@ -80,8 +80,9 @@ func makeRawTransport(spec transportSpec, baseCfg transport.TransportConfig) (tr
 // can use any of them. Transports that learn their client address only when
 // running go into rooms by spec name, for --share.
 func registerBootstrapTransports(m *manager.Manager, specs []transportSpec, baseCfg transport.TransportConfig, secret, ctx string, rooms map[string]roomLister) error {
+	isExit := m.Session().IsExit()
 	for _, spec := range specs {
-		raw, err := makeRawTransport(spec, baseCfg)
+		raw, err := makeRawTransport(spec, baseCfg, isExit)
 		if err != nil {
 			return fmt.Errorf("%s: %w", spec.Name, err)
 		}
@@ -100,6 +101,9 @@ func registerBootstrapTransports(m *manager.Manager, specs []transportSpec, base
 		// Manager-side: keep the raw pointer and its cookie provider.
 		if err := m.Add(spec.Name, spec.Type, raw, spec.Priority, provider); err != nil {
 			return fmt.Errorf("manager add %s: %w", spec.Name, err)
+		}
+		if spec.URL != transport.ContextPlaceholder {
+			m.SetURL(spec.Name, spec.URL)
 		}
 	}
 	return nil

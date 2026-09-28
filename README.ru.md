@@ -228,8 +228,6 @@ OpenFlux/
   tun_watch.go                     # Watcher сокетов для bypass-маршрутов
   tun_learn.go, tun_other.go       # Хелперы utun / заглушки для не-darwin
   signals_{unix,windows}.go        # Сигналы завершения
-  export_ios.go                    # cgo-мост для iOS-статической библиотеки
-  export_ios_packet.go             # Мост packet tunnel для iOS
   transport/
     transport.go                   # Интерфейс Transport
     batched.go                     # BatchedTransport (склейка + zstd)
@@ -272,7 +270,8 @@ OpenFlux/
   network/                         # Контрольные суммы, разбор пакетов
   utils/                           # Логирование
   ios-app/                         # iOS-клиент на SwiftUI (XcodeGen)
-  mobile/                          # gomobile-мост для Android/iOS (см. ниже)
+  mobile/                          # Мост для приложений: gomobile (Android) и
+                                   # C-библиотека iOS (mobile/ios, liboflux.a)
   build_all.sh                     # Кросс-сборка релизных бинарников
   build_ios.sh                     # Сборка статической библиотеки iOS (liboflux.a)
   build_ios_app.sh                 # Сборка + архив + экспорт IPA iOS
@@ -605,6 +604,8 @@ URL = YOUR_YANDEX_DOC_URL
 | `--share` | | `false` | Выходная нода: напечатать ссылку `openflux://` и QR-код для клиентов |
 | `--share-host` | | (первый публичный IPv4) | Выходная нода: адрес для `direct` в этой ссылке |
 | `--node-wizard` | | | Единственный аргумент: запускает протокол развёртывания по JSON-over-stdio вместо обычного запуска CLI (см. [Ключевые особенности](#ключевые-особенности)) |
+| `--parse-link` | | | `--parse-link <ссылка\|->`: читает ссылку openflux:// (`-`: из stdin) и печатает JSON `{"config","context"}` или `{"error","code","param"}` — тот же разбор, что у всех клиентов |
+| `--make-link` | | | `--make-link <json\|->`: собирает ссылку из конфигурации (`-`: из stdin) и печатает `{"link","config","context"}` или ошибку — так ссылку выпускает любой клиент |
 
 Устаревшие (оставлены на один релиз, автоматически маппятся на новые флаги):
 `--client`, `--exit-node`, `--tun`, `--socks5-mode`, `--legacy`,

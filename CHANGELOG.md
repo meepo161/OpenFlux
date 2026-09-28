@@ -3,6 +3,13 @@
 All notable changes to the OpenFlux core. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] / node-v1.2.0 - 2026-09-29 (meepo161/OpenFlux)
+
+The fork on p1neappleXpress/OpenFlux 0.2.0 (one protocol for every client,
+links made and read by the core) with the node wizard's transport choice
+and self-updating nodes (p1neappleXpress/OpenFlux#125) and the Accounts
+core side (`mobile.OfferExitCookies`). The node core is `node-v1.2.0`.
+
 ## [0.2.0] / node-v1.1.0 - 2026-09-28 (meepo161/OpenFlux)
 
 Releases of the meepo161 fork: the core with the node wizard's transport
@@ -31,6 +38,68 @@ this fork.
   that release's `node-install.sh` and `SHA256SUMS`, and rolls back if a
   channel does not stay up. An app with an older pinned script no longer
   downgrades a server the updater has moved on.
+
+## [0.2.0] - 2026-09-28
+
+Every client now behaves alike: peers of different builds and modes find
+each other instead of dropping every packet in silence. The node wizard
+(desktop and Android) installs this core as `node-v1.1.0`.
+
+### Added
+
+- Classic compatibility inside the Session (`PROTOCOL_NEGOTIATION.md`):
+  a classic setup with a key (`--transport=X`, the apps' classic profiles)
+  runs a Session and speaks classic to an exit that does not answer the
+  handshake, switching once it does; a classic-configured exit serves
+  classic and Session clients. `--negotiate` stays strict; exits configured
+  as a Session (wizard, `.conf`, `--transports`) serve Session clients only.
+- Codec fallback: the classic codec decodes batch-v2 and legacy frames,
+  sends what the peer sends, and the client tries the other framing when
+  the peer is silent. `--codec` is a preference now, not a requirement.
+- KDF context fallback: one rule for the context (`transport.KDFContexts`)
+  and alternates for what other builds derive; a record that fails under
+  the current keys is tried under them, the exit answers under the
+  client's context, a silent client cycles through them.
+- `mobile/ios`: the iOS C library (`build_ios.sh`) on package `mobile`,
+  replacing the root `export_ios*.go`: the calls the iOS app makes, plus
+  Session profiles (`OpenFluxShareDecode` returns one ready to start),
+  mode and captcha calls. An app that links this core as a submodule gets
+  the same Session, links and fallbacks as Android.
+- `mobile`: `ShareSessionSpecs`, `SetInitialCookies`, `SetLowMemory`
+  (Volga's new `SlimVolgaConfig` for the iOS extension), `ReadTimeout`,
+  `ConnectionMode`.
+- Links are read and made by the core only. `share.Read` / `share.Make`
+  answer every entry point with the same JSON (`--parse-link`, new
+  `--make-link`, `mobile.ReadShareLink` / `MakeShareLink`, the iOS
+  `OpenFluxShareDecode` / `OpenFluxShareEncode`): the configuration and
+  its context, the link, or an error `code` (and `param`) that the apps
+  put in their own words. `share.Make` normalizes what apps spell
+  differently (the default codec is left out, an encrypted link always
+  names its context, by the one rule when not given), so one
+  configuration gives one link on every client; the node wizard's link,
+  desktop and Android, comes from one `share.NodeConfig`.
+- Logs a user can act on without `-dd`: key or context mismatch, the peer
+  running the other layering, codec and context fallbacks, a second client
+  taking over the exit, carriers failing to start, documents dropping, and
+  a diagnosis when the handshake does not complete.
+
+### Fixed
+
+- A classic cupsonline client given the rooms as `--url` derived another
+  key than the exit that created them: nothing got through.
+- boards sent engine.io pings from the client, which an EIO=4 server
+  answers by closing the socket: the board dropped every 20 seconds.
+- A Session client's cupsonline carrier was built as an exit: with no or
+  dead rooms it created rooms of its own and waited in them.
+- openflux:// links: base64 padding, the standard alphabet, whitespace and
+  line breaks are accepted; secrets are counted in characters as Kotlin
+  counts them, not bytes.
+- Carrier names that differ between the two sides no longer break cookie
+  exchange and exit checks (messages carry the document URL).
+- yandex / mailru: a socket whose keepalive failed is closed so the
+  reconnect runs; writes are bounded.
+- `utils.Infof` reaches the apps' log screens.
+- A Session stopped each carrier twice.
 
 ## [0.1.0] - 2026-09-27
 

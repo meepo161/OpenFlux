@@ -221,8 +221,6 @@ OpenFlux/
   tun_watch.go                     # Socket watcher for bypass routes
   tun_learn.go, tun_other.go       # utun helpers / non-darwin stubs
   signals_{unix,windows}.go        # Shutdown signals
-  export_ios.go                    # cgo bridge for the iOS static library
-  export_ios_packet.go             # iOS packet tunnel bridge
   transport/
     transport.go                   # Transport interface
     batched.go                     # BatchedTransport (coalescing + zstd)
@@ -265,6 +263,8 @@ OpenFlux/
   network/                         # Checksums, packet parsing
   utils/                           # Logging
   ios-app/                         # SwiftUI iOS client (XcodeGen)
+  mobile/                          # App bridge: gomobile (Android) and the iOS
+                                   # C library (mobile/ios, liboflux.a)
   build_all.sh                     # Cross-build release binaries
   build_ios.sh                     # Build iOS static library (liboflux.a)
   build_ios_app.sh                 # Build + archive + export iOS app IPA
@@ -613,6 +613,8 @@ Measure raw goodput through the transport, without touching the host network:
 | `--share` | | `false` | Exit: print an `openflux://` link and QR code for clients |
 | `--share-host` | | (first public IPv4) | Exit: address clients dial for `direct` in that link |
 | `--node-wizard` | | | Sole argument: run the JSON-over-stdio provisioning protocol instead of normal CLI startup (see [Highlights](#highlights)) |
+| `--parse-link` | | | `--parse-link <link\|->`: read an openflux:// link (`-`: from stdin) and print `{"config","context"}` or `{"error","code","param"}` as JSON; the reading every client uses |
+| `--make-link` | | | `--make-link <json\|->`: build the link for a share configuration (`-`: from stdin) and print `{"link","config","context"}` or the error, as every client exports it |
 
 Deprecated (kept for one release, mapped automatically to the new flags):
 `--client`, `--exit-node`, `--tun`, `--socks5-mode`, `--legacy`,

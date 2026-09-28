@@ -14,12 +14,12 @@ import "fmt"
 // p1neappleXpress/OpenFlux releases.
 const (
 	PinnedRepo   = "meepo161/OpenFlux"
-	PinnedCommit = "b2aa79d6bc699cae07f383cf5c4f121c96c523a4"
-	PinnedSHA256 = "90d490bdbdd74c942a1a62a217aca2c26eec1181c165b954a9e4f9683e84329e"
+	PinnedCommit = "0000000000000000000000000000000000000000"
+	PinnedSHA256 = "0000000000000000000000000000000000000000000000000000000000000000"
 
 	OfficialRepo   = "p1neappleXpress/OpenFlux"
-	OfficialCommit = "122ab88baee0bdce515792b48318484e32d0d24c"
-	OfficialSHA256 = "70be5e964bf808c96aa9d32caef6b8e0d7c609f7af60c0acae45d4a6af5e6ec5"
+	OfficialCommit = "fe9dc8b0fc4672339024765e38843c27b5834fb4"
+	OfficialSHA256 = "42f61bf3d92687fa500cf97af1edecc334d79373b0a3988359bde1555b652a5d"
 )
 
 // Script sources the node wizard offers.

@@ -56,8 +56,14 @@ type DocSession struct {
 func (s *DocSession) safeWrite(messageType int, data []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	// A write into a half-open connection (NAT dropped it, the network
+	// changed) would otherwise block until the kernel gives up, minutes.
+	_ = s.Conn.SetWriteDeadline(time.Now().Add(docWriteTimeout))
 	return s.Conn.WriteMessage(messageType, data)
 }
+
+// docWriteTimeout bounds one WebSocket write to the document.
+const docWriteTimeout = 20 * time.Second
 
 type MailruDocsTransport struct {
 	*transport.BaseTransport
@@ -163,6 +169,9 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 		info, err := t.fetchDocInfo(t.weblink)
 		if err != nil {
 			utils.Debugf("[M-DOCS] fetchDocInfo failed: %v", err)
+			if utils.Throttled("m-docs.fetch", time.Minute) {
+				utils.Infof("[M-DOCS] cannot open the document: %v; retrying", err)
+			}
 			t.scheduleReconnect(attempt)
 			return
 		}
@@ -267,6 +276,9 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 			_, message, err := conn.ReadMessage()
 			if err != nil {
 				utils.Debugf("[M-DOCS] Read error: %v", err)
+				if utils.Throttled("m-docs.drop", time.Minute) {
+					utils.Infof("[M-DOCS] connection to the document dropped: %v; reconnecting", err)
+				}
 				t.SetConnected(false)
 				conn.Close()
 
@@ -343,8 +355,11 @@ func (t *MailruDocsTransport) keepAliveLoop() {
 
 		if session != nil && session.Conn != nil {
 			if err := session.safeWrite(websocket.TextMessage, []byte(keepAliveMsg)); err != nil {
-				utils.Debugf("[M-DOCS] Keep-alive failed: %v", err)
+				utils.Debugf("[M-DOCS] Keep-alive failed, closing the connection to reconnect: %v", err)
 				t.SetConnected(false)
+				// Close it so the reader, which may sit in ReadMessage on
+				// a half-open socket forever, errors out and reconnects.
+				_ = session.Conn.Close()
 			}
 		}
 	}
