@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"openflux/share"
+	"openflux/transport"
 )
 
 // ChannelTransport is one of a channel's carriers besides direct, which
@@ -27,10 +28,6 @@ type ChannelTransport struct {
 var transportPriority = map[string]int{"vyandex": 100, "mailru": 90, "cupsonline": 70}
 
 const directPriority = 50
-
-// sessionContextNone is the core's context for a node with no document
-// (pickSessionContext's placeholder).
-const sessionContextNone = "http://#"
 
 var (
 	volgaDocURL  = regexp.MustCompile(`^https://(docs|disk)\.yandex\.(ru|com|by|kz|uz)/edit/d/[A-Za-z0-9_-]{16,200}$`)
@@ -95,20 +92,16 @@ func TransportURL(ts []ChannelTransport, typ string) string {
 }
 
 // SessionContext is the encryption context both sides of the channel
-// derive: the highest-priority document, cups.online aside (its rooms are
-// no document), as the core's pickSessionContext and node-install.sh's
-// session_context pick it.
+// derive, by the core's one rule (transport.KDFContexts): the
+// highest-priority document, cups.online aside (its rooms are no
+// document). node-install.sh's session_context picks the same.
 func SessionContext(ts []ChannelTransport) string {
-	best, prio := sessionContextNone, -1
+	sources := make([]transport.ContextSource, 0, len(ts))
 	for _, t := range ts {
-		if t.Type == "cupsonline" || t.URL == "" {
-			continue
-		}
-		if p := transportPriority[t.Type]; p > prio {
-			best, prio = t.URL, p
-		}
+		sources = append(sources, transport.ContextSource{Type: t.Type, URL: t.URL, Priority: transportPriority[t.Type]})
 	}
-	return best
+	context, _ := transport.KDFContexts("", "", sources)
+	return context
 }
 
 // ShareLink is the openflux:// link of a new channel: its carriers in
@@ -129,7 +122,7 @@ func ShareLink(name, key, host string, port int, ts []ChannelTransport) (string,
 	c.Transports = append(c.Transports, share.Transport{
 		Type: "direct", Dial: net.JoinHostPort(host, strconv.Itoa(port)), Priority: directPriority,
 	})
-	return share.Encode(c)
+	return share.MakeLink(c)
 }
 
 // transportLines is the carriers' part of node-install.sh's config.

@@ -105,3 +105,24 @@ func TestExitShareLinkCarriesCreatedCupsRooms(t *testing.T) {
 		t.Fatalf("transports %+v", c.Transports)
 	}
 }
+
+// Android reads and makes links with the same answer as the CLI and iOS:
+// share.Result, byte for byte.
+func TestReadMakeShareLinkAnswerLikeShare(t *testing.T) {
+	cfg := `{"negotiate":true,"secret":"a shared secret of 32 characters","codec":"batched",` +
+		`"transports":[{"type":"yandex","url":"https://disk.yandex.ru/i/abc","priority":100},{"type":"direct","dial":"203.0.113.7:9443"}]}`
+	made := MakeShareLink(cfg)
+	if made != share.MakeJSON(cfg).JSON() {
+		t.Fatalf("MakeShareLink %s", made)
+	}
+	link := share.MakeJSON(cfg).Link
+	for _, in := range []string{link, " " + link[:30] + "\n" + link[30:], "https://example.com"} {
+		if got := ReadShareLink(in); got != share.Read(in).JSON() {
+			t.Errorf("ReadShareLink(%q) = %s", in, got)
+		}
+	}
+	node, err := NodeShareLink("node", "https://docs.yandex.ru/edit/d/AbC", "a shared secret of 32 characters", "203.0.113.7", 9443)
+	if want := share.Make(share.NodeConfig("node", "https://docs.yandex.ru/edit/d/AbC", "a shared secret of 32 characters", "203.0.113.7:9443")).Link; err != nil || node != want {
+		t.Errorf("NodeShareLink %q (%v), want %q", node, err, want)
+	}
+}

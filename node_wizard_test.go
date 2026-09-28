@@ -16,6 +16,7 @@ import (
 
 	"openflux/provision"
 	"openflux/share"
+	"openflux/transport"
 	"openflux/transport/yandex"
 )
 
@@ -230,7 +231,11 @@ func TestNodeConfMatchesShareLink(t *testing.T) {
 			t.Fatal(err)
 		}
 		c, _ := share.Decode(link)
-		if got := pickSessionContext("", conf.Interface["URL"], specs); got != c.Context {
+		sources := make([]transport.ContextSource, len(specs))
+		for i, s := range specs {
+			sources[i] = transport.ContextSource{Type: s.Type, URL: s.URL, Priority: s.Priority}
+		}
+		if got, _ := transport.KDFContexts("", conf.Interface["URL"], sources); got != c.Context {
 			t.Fatalf("%+v: node derives context %q, link says %q\n%s", ts, got, c.Context, out)
 		}
 		if len(specs) != len(c.Transports) {
@@ -238,7 +243,9 @@ func TestNodeConfMatchesShareLink(t *testing.T) {
 		}
 		for i, s := range specs {
 			lt := c.Transports[i]
-			if s.Type != lt.Type || s.Priority != lt.Priority || (s.Type != "direct" && s.URL != lt.URL) {
+			// share.Make drops the priority of a lone carrier: nothing to rank.
+			samePriority := s.Priority == lt.Priority || len(c.Transports) == 1 && lt.Priority == 0
+			if s.Type != lt.Type || !samePriority || (s.Type != "direct" && s.URL != lt.URL) {
 				t.Fatalf("%+v: carrier %d: node %+v, link %+v", ts, i, s, lt)
 			}
 		}

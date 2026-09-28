@@ -138,46 +138,15 @@ func isNumber(s string) bool {
 	return err == nil
 }
 
-// pickSessionContext returns the KDF salt used to derive encryption keys.
-// The same value must be produced on both peers, regardless of how the
-// document URL was supplied (--url, --yandex-url, [Transport] URL, ...).
-//
-// Priority:
-//
-//	explicit      --session-context, if non-empty
-//	--url         globalURL, if set and not the placeholder
-//	transports    URL of the highest-priority transport that has one,
-//	              cupsonline aside
-//	fallback      the placeholder "http://#"
-//
-// A cupsonline "URL" is the room list the exit creates when it starts and
-// prints for clients, so the exit cannot know it beforehand; letting it
-// into the context gave the two sides different keys.
-//
-// This is what the OpenFlux-Android client derives for a Session profile,
-// and the fallback is what older builds used whenever --url was unset, so a
-// node without any document URL (direct, oneme) keeps its old key.
-func pickSessionContext(explicit, globalURL string, specs []transportSpec) string {
-	const placeholder = "http://#"
-	if explicit != "" {
-		return explicit
-	}
-	if globalURL != "" && globalURL != placeholder {
-		return globalURL
-	}
-	best := -1
+// contextSources describes the carriers for transport.KDFContexts, the one
+// rule every peer (CLI, Android, Desktop, iOS) derives the encryption
+// context with.
+func contextSources(specs []transportSpec) []transport.ContextSource {
+	out := make([]transport.ContextSource, len(specs))
 	for i, s := range specs {
-		if s.Type == "cupsonline" || s.URL == "" || s.URL == placeholder {
-			continue
-		}
-		if best < 0 || s.Priority > specs[best].Priority {
-			best = i
-		}
+		out[i] = transport.ContextSource{Type: s.Type, URL: s.URL, Priority: s.Priority}
 	}
-	if best >= 0 {
-		return specs[best].URL
-	}
-	return placeholder
+	return out
 }
 
 // managerRefreshLoop periodically asks the exit node for a fresh cookie jar.
@@ -201,6 +170,15 @@ func main() {
 	// The desktop wizard's JSON protocol owns stdout: no banner, no flags.
 	if len(os.Args) == 2 && os.Args[1] == "--node-wizard" {
 		os.Exit(runNodeWizard(os.Stdin, os.Stdout))
+	}
+	// The core's own openflux:// parser and builder for apps and scripts,
+	// so a link is read and made the same way everywhere: JSON on stdout,
+	// before any banner.
+	if len(os.Args) == 3 && os.Args[1] == "--parse-link" {
+		os.Exit(runParseLink(os.Args[2], os.Stdin, os.Stdout))
+	}
+	if len(os.Args) == 3 && os.Args[1] == "--make-link" {
+		os.Exit(runMakeLink(os.Args[2], os.Stdin, os.Stdout))
 	}
 	fmt.Print("written by p1neappleXpress\n")
 
@@ -655,8 +633,10 @@ DEPRECATED (removed in v2)
 		}
 		specs = buildTransportSpecs(parsed, urls, extra)
 	} else {
+		// Named after the type, as --transports and the apps name
+		// carriers: cookie exchange with a Session peer is by name.
 		specs = []transportSpec{{
-			Name:     "primary",
+			Name:     *transportType,
 			Type:     *transportType,
 			Priority: 100,
 			URL:      globalDocUrl,
@@ -692,9 +672,9 @@ DEPRECATED (removed in v2)
 			log.Fatalf("Read encryption key file: %v", err)
 		}
 		secret = strings.TrimSpace(string(b))
-		if len(secret) < 16 {
-			log.Fatalf("Encryption key from %s is too short (%d chars, need at least 16)",
-				*encryptionKeyFile, len(secret))
+		if n := utils.SecretChars(secret); n < utils.MinSecretChars {
+			log.Fatalf("Encryption key from %s is too short (%d chars, need at least %d)",
+				*encryptionKeyFile, n, utils.MinSecretChars)
 		}
 		if strings.ContainsAny(secret, "\r\n\t") {
 			utils.Debugf("[KEY] WARNING: secret still contains whitespace after TrimSpace; lengths may differ across platforms")
@@ -707,10 +687,11 @@ DEPRECATED (removed in v2)
 		}
 	}
 
-	sessionContext = pickSessionContext(*sessionContextFlag, globalDocUrl, specs)
+	sessionContext, contextAlternates := transport.KDFContexts(*sessionContextFlag, globalDocUrl, contextSources(specs))
 	if *encryptionKeyFile != "" {
-		utils.Debugf("[KEY] context=%q sha256=%s (MUST match on both peers)",
-			sessionContext, utils.Sha256Hex([]byte(sessionContext)))
+		utils.Debugf("[KEY] context=%q sha256=%s (MUST match on both peers; %d alternates tried on mismatch)",
+			sessionContext, utils.Sha256Hex([]byte(sessionContext)), len(contextAlternates))
+		log.Printf("Encryption context: sha256 %s", utils.Sha256Short([]byte(sessionContext)))
 	}
 
 	// Decide whether we run the full Session path (encryption + negotiate)
@@ -722,12 +703,34 @@ DEPRECATED (removed in v2)
 		demux       *transport.PortDemux
 	)
 
-	// [Transport] sections in a .conf describe a multi-transport session
-	// just like --transports; without this they were silently ignored and
-	// only the single --transport ran.
-	if *negotiate || *transportsFlag != "" || len(confTransports) > 0 {
+	// configuredSession: the operator asked for a Session. [Transport]
+	// sections in a .conf describe one just like --transports.
+	//
+	// A classic setup (--transport=X) with a key runs as a Session too,
+	// with classic compatibility: a client falls back to the classic
+	// layering while the exit does not answer the handshake and upgrades
+	// once it does; an exit serves classic clients and Session clients.
+	// Only --negotiate is strict. Without a key only classic is possible.
+	configuredSession := *negotiate || *transportsFlag != "" || len(confTransports) > 0
+	classicCompat := false
+	switch {
+	case *role != roleClient && *role != roleExit:
+	case !configuredSession && secret != "":
+		classicCompat = true
+	case configuredSession && !*negotiate && *role == roleClient && len(specs) == 1:
+		classicCompat = true
+	}
+	if configuredSession || classicCompat {
 		if secret == "" {
 			log.Fatal("--transports/--negotiate/.conf transports require --encryption-key-file")
+		}
+		switch {
+		case classicCompat && isExit:
+			log.Printf("Mode: Session, also serving classic clients (--negotiate makes it Session-only)")
+		case classicCompat:
+			log.Printf("Mode: Session, falling back to classic while the exit does not answer the handshake")
+		default:
+			log.Printf("Mode: Session")
 		}
 
 		caps := transport.CapabilityIPv4 | transport.CapabilityTCP | transport.CapabilityUDP
@@ -742,10 +745,14 @@ DEPRECATED (removed in v2)
 		if err != nil {
 			log.Fatal(err)
 		}
+		if classicCompat {
+			sess.SetClassic(*codec)
+		}
+		sess.SetAlternateContexts(contextAlternates)
 
 		// Build the factory that SubtypeTransportStart will use for
 		// dynamic transports.
-		factory := transportFactory(config)
+		factory := transportFactory(config, isExit)
 		managerInst = manager.New(sess, factory, secret, sessionContext)
 
 		if err := registerBootstrapTransports(managerInst, specs, config, secret, sessionContext, rooms); err != nil {
@@ -810,7 +817,8 @@ DEPRECATED (removed in v2)
 		exchanger = nil // cookie handling lives in the Manager
 
 	} else {
-		// Legacy single-transport path (no negotiate, no multi).
+		// Classic single-transport path without a Session: no key (the
+		// Session needs one), or a bench role.
 		var inner transport.Transport
 		switch *transportType {
 		case "boards":
@@ -847,22 +855,21 @@ DEPRECATED (removed in v2)
 			}
 		}
 
-		switch *codec {
-		case codecBatched:
-			log.Printf("Codec: batched (zstd + coalescing)")
-			inner = transport.NewBatchedTransport(inner)
-		case codecLegacy:
-			log.Printf("Codec: legacy (per-packet LZ4, no batching)")
-			inner = transport.NewCompressedTransport(inner)
-		}
+		// Either framing is accepted; the preferred one is sent until the
+		// peer shows which it speaks (see transport.CodecTransport).
+		log.Printf("Codec: %s preferred, falls back to the other framing when the peer does not answer", *codec)
+		inner = transport.NewCodecTransport(inner, *codec, !isExit)
 
 		if *encryptionKeyFile != "" {
 			encrypted, err := transport.NewEncryptedTransport(inner, secret, sessionContext, isExit)
 			if err != nil {
 				log.Fatalf("Configure encrypted transport: %v", err)
 			}
+			encrypted.SetAlternateContexts(contextAlternates)
 			inner = encrypted
 			log.Printf("Transport encryption: AES-256-GCM enabled")
+		} else {
+			log.Printf("Transport encryption: OFF (no --encryption-key-file): the carrier sees the traffic, and a peer with a key cannot talk to this one")
 		}
 
 		trans = inner
@@ -916,20 +923,41 @@ DEPRECATED (removed in v2)
 
 	switch *role {
 	case roleExit:
+		var printLink func()
 		if *shareFlag {
-			session := *negotiate || *transportsFlag != "" || len(confTransports) > 0
+			// A classic exit keeps advertising classic: older clients
+			// read the link too, and updated ones upgrade on their own.
+			session := configuredSession
 			host := *shareHost
 			if host == "" {
 				host = publicIPv4()
 			}
-			printLink := func() {
+			printLink = func() {
 				printShare(shareConfig(specs, session, *codec, secret, sessionContext, host, rooms))
 			}
-			// Rooms created later (a start that failed and was retried)
-			// or anew change the link: print it again for the clients.
-			for _, r := range rooms {
-				r.OnRoomList(func(string) { printLink() })
+		}
+		// A cupsonline exit learns its room list only once it runs. Older
+		// classic clients derived their key from that list; accept it as
+		// an alternate context. Rooms created later (a start that failed
+		// and was retried) or anew change the link: print it again.
+		var sess *transport.Session
+		if managerInst != nil {
+			sess = managerInst.Session()
+		}
+		for _, r := range rooms {
+			r.OnRoomList(func(packed string) {
+				if sess != nil && packed != "" {
+					sess.SetAlternateContexts([]string{packed})
+				}
+				if printLink != nil {
+					printLink()
+				}
+			})
+			if list := r.RoomList(); list != "" && sess != nil {
+				sess.SetAlternateContexts([]string{list})
 			}
+		}
+		if printLink != nil {
 			printLink()
 		}
 		runExit(trans, exitMode)

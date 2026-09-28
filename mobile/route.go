@@ -47,3 +47,17 @@ func CurrentTransport() string {
 	}
 	return ""
 }
+
+// ConnectionMode says how traffic currently goes: "session" (the
+// authenticated Session), "classic" (the exit does not answer the Session
+// handshake: an older or classic node, or it has not answered yet), or ""
+// (not connected / no key).
+func ConnectionMode() string {
+	route.mu.Lock()
+	s := route.session
+	route.mu.Unlock()
+	if s == nil {
+		return ""
+	}
+	return s.Mode()
+}
