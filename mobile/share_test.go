@@ -121,8 +121,10 @@ func TestReadMakeShareLinkAnswerLikeShare(t *testing.T) {
 			t.Errorf("ReadShareLink(%q) = %s", in, got)
 		}
 	}
-	node, err := NodeShareLink("node", "https://docs.yandex.ru/edit/d/AbC", "a shared secret of 32 characters", "203.0.113.7", 9443)
-	if want := share.Make(share.NodeConfig("node", "https://docs.yandex.ru/edit/d/AbC", "a shared secret of 32 characters", "203.0.113.7:9443")).Link; err != nil || node != want {
+	// A Yandex-document channel's link is share.NodeConfig's.
+	doc := "https://docs.yandex.ru/edit/d/AbCdEfGhIjKlMnOpQrStUv"
+	node, err := NodeShareLink("node", `[{"type":"vyandex","url":"`+doc+`"}]`, "a shared secret of 32 characters", "203.0.113.7", 9443)
+	if want := share.Make(share.NodeConfig("node", doc, "a shared secret of 32 characters", "203.0.113.7:9443")).Link; err != nil || node != want {
 		t.Errorf("NodeShareLink %q (%v), want %q", node, err, want)
 	}
 }
