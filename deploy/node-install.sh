@@ -46,14 +46,14 @@
 set -u
 umask 077
 
-CORE_VERSION="node-v1.0.1"
-SHA_amd64="9fa157550d2c20c0bc03c12823b4ad0140ba070199b5548eacf98c5a2cca6cb8"
-SHA_arm64="325335fa416d2f87cba84c5a85d865c596169cd79c7f4cfc916cd67a88612886"
-SHA_arm="7f280b01a53bee33e84a7525e035f1e09f51e9070b612b903e492c45c6edf300"
+CORE_VERSION="node-v1.1.0"
+SHA_amd64="3837905e99e785d28960763928d09f63740d7582511765a74d84bebd6331af60"
+SHA_arm64="68d6097b162b8fac4efb3eda09800a5e277e6282addea1f48318af30326ecda8"
+SHA_arm="15d64b265e85fbf745e26462c594f26b6d77ed03529010e87cd38f449b8a33a5"
 # The repository this script and its core come from: the core is one of its
 # node-v* releases, and the updater follows them (UPDATE_CONF may override
 # that with a "repo=owner/name" line).
-RELEASE_REPO="p1neappleXpress/OpenFlux"
+RELEASE_REPO="meepo161/OpenFlux"
 GITHUB_API="https://api.github.com"
 GITHUB_RAW="https://raw.githubusercontent.com"
 GITHUB_WEB="https://github.com"

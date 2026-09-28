@@ -129,3 +129,17 @@ func TestChannelConfigLines(t *testing.T) {
 		t.Fatal("a line break in a link must not reach the script")
 	}
 }
+
+func TestPinnedForSources(t *testing.T) {
+	fork, err := PinnedFor("")
+	if err != nil || fork != Pinned() || !strings.Contains(fork.URL, "/"+PinnedRepo+"/") {
+		t.Fatalf("default: %+v %v", fork, err)
+	}
+	official, err := PinnedFor(SourceOfficial)
+	if err != nil || !strings.Contains(official.URL, "/p1neappleXpress/OpenFlux/"+OfficialCommit+"/") || official.SHA256 != OfficialSHA256 {
+		t.Fatalf("official: %+v %v", official, err)
+	}
+	if _, err := PinnedFor("elsewhere"); err == nil {
+		t.Fatal("an unknown source must fail")
+	}
+}

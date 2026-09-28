@@ -244,3 +244,16 @@ func TestNodeConfMatchesShareLink(t *testing.T) {
 		}
 	}
 }
+
+func TestNodeWizardRefusesUnknownSource(t *testing.T) {
+	w := newNodeWizard()
+	dialled := false
+	w.dial = func(context.Context, provision.Target) (*provision.Conn, error) {
+		dialled = true
+		return nil, errors.New("dialled")
+	}
+	r := wizardCall(t, w, "connect", wizardParams{Host: "h", User: "u", Password: "p", Source: "elsewhere"})
+	if r["ok"] != false || !strings.Contains(r["error"].(string), "источник") || dialled {
+		t.Fatalf("connect with an unknown source: %v (dialled %v)", r, dialled)
+	}
+}

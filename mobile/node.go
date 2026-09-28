@@ -56,7 +56,14 @@ func failure(err error, extra map[string]interface{}) string {
 // "trust": true, and the app calls again with it once the user agrees. A
 // changed key comes back with "mismatch": true and must not be trusted
 // silently.
-func NodeConnect(host string, port int, user, password, privateKey, passphrase, hostKey string) string {
+//
+// source picks the node's core: "fork" (default) or "official", see
+// provision.PinnedFor.
+func NodeConnect(host string, port int, user, password, privateKey, passphrase, hostKey, source string) string {
+	script, err := provision.PinnedFor(source)
+	if err != nil {
+		return failure(err, nil)
+	}
 	NodeDisconnect()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -72,7 +79,7 @@ func NodeConnect(host string, port int, user, password, privateKey, passphrase, 
 		return failure(err, nil)
 	}
 	appendLog("[NODE] SSH: подключено, загрузка скрипта установки")
-	if err := conn.FetchScript(provision.Pinned()); err != nil {
+	if err := conn.FetchScript(script); err != nil {
 		conn.Close()
 		return failure(err, nil)
 	}

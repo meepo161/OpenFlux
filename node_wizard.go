@@ -55,6 +55,9 @@ type wizardParams struct {
 	// DocumentURL alone means a Yandex document (older apps).
 	Transports []provision.ChannelTransport `json:"transports"`
 	AutoUpdate bool                         `json:"autoUpdate"`
+	// Source picks the node's core: "fork" (default) or "official", see
+	// provision.PinnedFor.
+	Source string `json:"source"`
 }
 
 // transports is the channel's carriers from the request.
@@ -76,7 +79,7 @@ type nodeWizard struct {
 	// Tests replace these to run without a VDS or Yandex.
 	dial      func(context.Context, provision.Target) (*provision.Conn, error)
 	checkDoc  func(string) (yandex.VolgaDocument, error)
-	newScript func() provision.Script
+	newScript func(source string) (provision.Script, error)
 	newRooms  func(context.Context) (string, error)
 }
 
@@ -84,7 +87,7 @@ func newNodeWizard() *nodeWizard {
 	return &nodeWizard{
 		dial:      provision.Dial,
 		checkDoc:  func(u string) (yandex.VolgaDocument, error) { return yandex.CheckVolgaDocument(u, nil) },
-		newScript: provision.Pinned,
+		newScript: provision.PinnedFor,
 		newRooms:  cupsonline.CreateRoomList,
 	}
 }
@@ -232,6 +235,10 @@ func (w *nodeWizard) handle(req wizardRequest) map[string]interface{} {
 // can compare the fingerprint; a changed key with "mismatch": true.
 func (w *nodeWizard) connect(p wizardParams) map[string]interface{} {
 	w.disconnect()
+	script, err := w.newScript(p.Source)
+	if err != nil {
+		return wizardFailure(err, nil)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	conn, err := w.dial(ctx, provision.Target{
@@ -245,7 +252,7 @@ func (w *nodeWizard) connect(p wizardParams) map[string]interface{} {
 		}
 		return wizardFailure(err, nil)
 	}
-	if err := conn.FetchScript(w.newScript()); err != nil {
+	if err := conn.FetchScript(script); err != nil {
 		conn.Close()
 		return wizardFailure(err, nil)
 	}

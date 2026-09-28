@@ -3,7 +3,20 @@
 All notable changes to the OpenFlux core. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.2.0] / node-v1.1.0 - 2026-09-28 (meepo161/OpenFlux)
+
+Releases of the meepo161 fork: the core with the node wizard's transport
+choice and self-updating nodes (p1neappleXpress/OpenFlux#125), wired to
+this fork.
+
+### Changed
+
+- `deploy/node-install.sh` installs the core from this fork's `node-v*`
+  releases and its updater follows them (`RELEASE_REPO=meepo161/OpenFlux`).
+- The node wizard (`--node-wizard` `connect`, `mobile.NodeConnect`) takes a
+  `source`: `fork` (default) installs this fork's core, `official` the same
+  script following p1neappleXpress/OpenFlux (`provision.PinnedFor`).
+
 
 ### Added
 
