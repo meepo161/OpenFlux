@@ -180,6 +180,7 @@ func buildSessionWith(specsJSON, secret string, exit bool, opt sessionOptions) (
 	proxy := &authProxy{demux: demux}
 	setAuthProxy(proxy)
 	attachSessionCaptcha(m, keys, proxy)
+	setClientSession(m, types)
 	appendLog("[ANDROID] Session: шифрование AES-256-GCM, согласование с нодой")
 	return demux, sess, nil
 }
