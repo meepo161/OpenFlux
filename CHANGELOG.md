@@ -3,6 +3,19 @@
 All notable changes to the OpenFlux core. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.1] / node-v1.2.1 - 2026-09-29 (meepo161/OpenFlux)
+
+### Fixed
+
+- A full packet batch queue now waits for capacity instead of dropping data.
+  A batch rejected by a temporarily full or disconnected carrier is retried
+  in order until it is accepted or the tunnel stops.
+
+### Added
+
+- Tunnel diagnostics report queue waits, carrier send retries and TCP
+  retransmissions every 30 seconds when any of those counters increases.
+
 ## [0.3.0] / node-v1.2.0 - 2026-09-29 (meepo161/OpenFlux)
 
 The fork on p1neappleXpress/OpenFlux 0.2.0 (one protocol for every client,
