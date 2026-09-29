@@ -39,12 +39,14 @@ func TestCheckTransportsCleansAndOrders(t *testing.T) {
 func TestCheckTransportsRefuses(t *testing.T) {
 	for name, ts := range map[string][]ChannelTransport{
 		"twice":        {{"vyandex", testVolga}, {"vyandex", testVolga}},
-		"unknown":      {{"boards", "https://boards.yandex.ru/whiteboard/?hash=1"}},
+		"board hash":   {{"boards", "https://boards.yandex.ru/whiteboard/?hash=1"}},
 		"direct":       {{"direct", "1.2.3.4:5"}},
 		"max":          {{"oneme", "token"}},
 		"volga link":   {{"vyandex", "https://disk.yandex.ru/i/abc"}},
 		"mailru link":  {{"mailru", "https://cloud.mail.ru/home/doc.docx"}},
 		"mailru other": {{"mailru", "https://evil.example/public/a/b"}},
+		"board host":   {{"boards", "https://evil.example/whiteboard/?hash=820d6571111dffeb9e85de65ccfc880a"}},
+		"yandex other": {{"yandex", "https://evil.example/edit/d/AbCdEfGhIjKlMnOpQrStUv"}},
 		"rooms":        {{"cupsonline", "not base64!"}},
 		"no rooms":     {{"cupsonline", ""}},
 		"newline":      {{"mailru", testMailru + "\nkey=0"}},
@@ -141,5 +143,32 @@ func TestPinnedForSources(t *testing.T) {
 	}
 	if _, err := PinnedFor("elsewhere"); err == nil {
 		t.Fatal("an unknown source must fail")
+	}
+}
+
+func TestCheckTransportsYandexDocsAndBoards(t *testing.T) {
+	board := "https://boards.yandex.ru/whiteboard/?hash=820d6571111dffeb9e85de65ccfc880a"
+	got, err := CheckTransports([]ChannelTransport{
+		{Type: "boards", URL: board + "&from=cabinet#x"},
+		{Type: "cupsonline", URL: testRooms},
+		{Type: "mailru", URL: testMailru},
+		{Type: "yandex", URL: testVolga + "?sk=y"},
+		{Type: "vyandex", URL: testVolga},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ChannelTransport{{"vyandex", testVolga}, {"yandex", testVolga}, {"mailru", testMailru}, {"boards", board}, {"cupsonline", testRooms}}
+	for i := range want {
+		if i >= len(got) || got[i] != want[i] {
+			t.Fatalf("got %+v, want %+v", got, want)
+		}
+	}
+	if _, err := CheckTransports([]ChannelTransport{{"yandex", "https://disk.yandex.ru/i/AbCdEf123"}}); err != nil {
+		t.Fatalf("public disk link: %v", err)
+	}
+	// A channel of a board alone derives its context from the board.
+	if c := SessionContext([]ChannelTransport{{"boards", board}}); c != board {
+		t.Fatalf("board context %q", c)
 	}
 }

@@ -32,7 +32,9 @@
 #                                                 newest node-v* release)
 #        node-install.sh autoupdate on|off        (run as root: the updater)
 # The config is "key=value" lines: channel, key, port, the transports
-# (vyandex= or its old name url=: a Yandex document; mailru=: a Mail.ru
+# (vyandex= or its old name url=: a Yandex document; yandex=: a Yandex
+# document through the older Yandex Docs transport; boards=: a Yandex board
+# open to guests; mailru=: a Mail.ru
 # public document; cupsonline=: the packed room list), autoupdate=yes|no,
 # and optionally cookies: the channel's Yandex sign-in as the core's cookie store JSON,
 # base64-encoded. It goes to /var/lib/openflux-node/<channel>/cookies.json
@@ -239,7 +241,7 @@ pick_port() {
 
 # ---- input ------------------------------------------------------------------
 
-CHANNEL=""; URL=""; MAILRU=""; CUPS=""; KEY=""; PORT=""; COOKIES=""; AUTOUPDATE=""
+CHANNEL=""; URL=""; YANDEX=""; MAILRU=""; BOARDS=""; CUPS=""; KEY=""; PORT=""; COOKIES=""; AUTOUPDATE=""
 
 # read_config [FILE]: reads stdin, or FILE and then deletes it.
 read_config() {
@@ -254,7 +256,9 @@ read_config() {
             channel=*) CHANNEL=${line#channel=} ;;
             url=*) URL=${line#url=} ;;
             vyandex=*) URL=${line#vyandex=} ;;
+            yandex=*) YANDEX=${line#yandex=} ;;
             mailru=*) MAILRU=${line#mailru=} ;;
+            boards=*) BOARDS=${line#boards=} ;;
             cupsonline=*) CUPS=${line#cupsonline=} ;;
             key=*) KEY=${line#key=} ;;
             port=*) PORT=${line#port=} ;;
@@ -271,6 +275,12 @@ valid_key() { printf '%s' "$1" | grep -Eq '^[0-9a-f]{64}$'; }
 valid_url() {
     printf '%s' "$1" | grep -Eq '^https://(docs|disk)\.yandex\.(ru|com|by|kz|uz)/edit/d/[A-Za-z0-9_-]{16,200}$'
 }
+valid_yandex() {
+    printf '%s' "$1" | grep -Eq '^https://(docs|disk)\.yandex\.(ru|com|by|kz|uz)/(edit/d/[A-Za-z0-9_-]{16,200}|i/[A-Za-z0-9_-]{6,64})$'
+}
+valid_boards() {
+    printf '%s' "$1" | grep -Eq '^https://boards\.yandex\.ru/whiteboard/\?hash=[0-9a-f]{32}$'
+}
 valid_mailru() {
     printf '%s' "$1" | grep -Eq '^https://cloud\.mail\.ru/public/[A-Za-z0-9_-]{2,64}/[A-Za-z0-9_-]{2,128}$'
 }
@@ -283,9 +293,11 @@ valid_port() {
 # check_transports: validates the chosen transports (plan and apply).
 check_transports() {
     [ -z "$URL" ] || valid_url "$URL" || fail input "адрес документа должен быть вида https://docs.yandex.ru/edit/d/..."
+    [ -z "$YANDEX" ] || valid_yandex "$YANDEX" || fail input "адрес документа Yandex Docs должен быть вида https://docs.yandex.ru/edit/d/..."
     [ -z "$MAILRU" ] || valid_mailru "$MAILRU" || fail input "ссылка Mail.ru должна быть вида https://cloud.mail.ru/public/..."
+    [ -z "$BOARDS" ] || valid_boards "$BOARDS" || fail input "ссылка на доску должна быть вида https://boards.yandex.ru/whiteboard/?hash=..."
     [ -z "$CUPS" ] || valid_rooms "$CUPS" || fail input "неверный список комнат cups.online"
-    [ -z "$COOKIES" ] || [ -n "$URL" ] || fail input "вход в Яндекс нужен только каналу с документом Яндекса"
+    [ -z "$COOKIES" ] || [ -n "$URL" ] || [ -n "$YANDEX" ] || fail input "вход в Яндекс нужен только каналу с документом Яндекса"
     case "$AUTOUPDATE" in ""|yes|no) ;; *) fail input "autoupdate: yes или no" ;; esac
 }
 
@@ -293,7 +305,9 @@ check_transports() {
 transport_names() {
     names=""
     [ -n "$URL" ] && names="Яндекс Документ"
+    [ -n "$YANDEX" ] && names="${names:+$names, }Yandex Docs"
     [ -n "$MAILRU" ] && names="${names:+$names, }Mail.ru Документ"
+    [ -n "$BOARDS" ] && names="${names:+$names, }Яндекс Доска"
     [ -n "$CUPS" ] && names="${names:+$names, }cups.online"
     printf '%s' "$names"
 }
@@ -302,7 +316,10 @@ transport_names() {
 # pickSessionContext does: the highest-priority transport's URL, cups.online
 # aside. "" leaves node.conf without a URL line (the core's "http://#").
 session_context() {
-    if [ -n "$URL" ]; then printf '%s' "$URL"; elif [ -n "$MAILRU" ]; then printf '%s' "$MAILRU"; fi
+    if [ -n "$URL" ]; then printf '%s' "$URL"
+    elif [ -n "$YANDEX" ]; then printf '%s' "$YANDEX"
+    elif [ -n "$MAILRU" ]; then printf '%s' "$MAILRU"
+    elif [ -n "$BOARDS" ]; then printf '%s' "$BOARDS"; fi
 }
 
 # write_cookies: decodes COOKIES into the channel's cookie store, which the
@@ -574,7 +591,9 @@ EOF
     context=$(session_context)
     [ -n "$context" ] && printf 'URL = %s\n' "$context"
     [ -n "$URL" ] && printf '\n[Transport vyandex]\nType = vyandex\nPriority = 100\nURL = %s\n' "$URL"
+    [ -n "$YANDEX" ] && printf '\n[Transport yandex]\nType = yandex\nPriority = 95\nURL = %s\n' "$YANDEX"
     [ -n "$MAILRU" ] && printf '\n[Transport mailru]\nType = mailru\nPriority = 90\nURL = %s\n' "$MAILRU"
+    [ -n "$BOARDS" ] && printf '\n[Transport boards]\nType = boards\nPriority = 80\nURL = %s\n' "$BOARDS"
     [ -n "$CUPS" ] && printf '\n[Transport cupsonline]\nType = cupsonline\nPriority = 70\nURL = %s\n' "$CUPS"
     printf '\n[Transport direct]\nType = direct\nPriority = 50\nListen = 0.0.0.0:%s\n' "$PORT"
 }
