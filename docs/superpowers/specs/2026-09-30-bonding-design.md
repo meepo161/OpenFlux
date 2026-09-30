@@ -37,20 +37,29 @@ The client repeats the offer on each keepalive until answered, and stripes
 only once answered. A new session (peer restart, takeover) starts with
 bonding off until agreed again.
 
-### 2. Sending: least completion time
+### 2. Sending: acknowledged in-flight per link
 
-With bonding agreed, every live link (heard lately; see
-`liveLinksLocked`) is a candidate regardless of priority. Each packet goes
-to the link with the smallest `(queuedBytes + len(p)) / rate`:
+Carriers queue internally (a document's write queue), so the sender cannot
+see a link's real speed from its own queue. The receiver reports what
+arrived instead, as SRTLA does with SRT ACKs:
 
-- `BatchedTransport` counts bytes queued and bytes handed to the carrier;
-  `queuedBytes` is the difference.
-- `rate` is an EWMA of bytes handed to the carrier per second, sampled
-  every 500 ms while the link has data queued; it starts at 256 KiB/s and
-  never goes under 16 KiB/s, so an idle link is still tried.
+- With bonding agreed, the receiver sends `SubtypeBondingAck` every 50 ms
+  while data arrives: the newest sequence it accepted and a 512-bit map of
+  the 512 numbers up to it (72 bytes). A lost ack is covered by the next.
+- The sender remembers, for each packet in flight, the link, size and send
+  time. An ack credits the packet's link: in-flight bytes go down,
+  delivered bytes and an RTT sample go up. A packet unacknowledged for
+  2 s counts as lost and leaves the in-flight count.
+- `rate` per link is an EWMA of delivered bytes per second over 250 ms
+  windows; it starts at 256 KiB/s and never goes under 16 KiB/s.
+- Every live link (heard lately; see `liveLinksLocked`) is a candidate
+  regardless of priority; each packet goes to the one with the smallest
+  `(inflight + len(p)) / rate`.
 - Control messages and hellos go as today.
 
-Both sides stripe once agreed (the exit's replies too).
+Both sides stripe once agreed (the exit's replies too). Attribution needs
+no link names: the sender knows which link carried which number, so a
+document joined twice from one client works as well.
 
 ### 3. Receiving: reorder buffer
 
@@ -97,7 +106,7 @@ Same profile fields (network choice adds Ethernet); the `.conf` gets
 ## Testing
 
 - Unit (transport): links with set rate/latency/drop; the scheduler's split
-  follows the rates; the reorder buffer restores order and skips a lost
+  follows the acknowledged rates; acks encode and decode; the reorder buffer restores order and skips a lost
   number after `hold`; a link dying mid-flow stalls less than `hold` plus
   one keepalive; a bonding client with an old exit never stripes; the exit
   reorders only after agreement.
