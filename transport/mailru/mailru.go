@@ -365,6 +365,9 @@ func (t *MailruDocsTransport) keepAliveLoop() {
 	}
 }
 
+// unlockDocumentMsg releases the lock a joining editor puts on this one.
+const unlockDocumentMsg = `42["message",{"type":"unLockDocument","unlock":true,"isSave":false,"releaseLocks":false,"deleteIndex":-1}]`
+
 func (t *MailruDocsTransport) handleMessage(session *DocSession, data []byte) {
 	text := string(data)
 
@@ -385,6 +388,22 @@ func (t *MailruDocsTransport) handleMessage(session *DocSession, data []byte) {
 
 	if strings.Contains(text, `"type":"auth"`) && strings.Contains(text, `"result":1`) {
 		utils.Debugf("[M-DOCS] Auth OK for user %s", session.UserID)
+		return
+	}
+
+	if !strings.Contains(text, "cursor") {
+		utils.Debugf("[M-DOCS] server message: %.300s", text)
+	}
+
+	// A second editor joining locks the document on the first one
+	// (lockDocument) until that one unlocks it; the server drops a holder
+	// that does not within 30s (disconnectReason 4007) and the dropped
+	// peer, rejoining, locks it on the other: the carrier went down every
+	// half minute while both peers were on it.
+	if strings.Contains(text, `"type":"connectState"`) {
+		if session != nil && session.Conn != nil {
+			session.safeWrite(websocket.TextMessage, []byte(unlockDocumentMsg))
+		}
 		return
 	}
 

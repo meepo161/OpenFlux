@@ -3,6 +3,19 @@
 All notable changes to the OpenFlux core. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.3] / node-v1.2.3 - 2026-09-30 (meepo161/OpenFlux)
+
+### Fixed
+
+- Mail.ru carrier: when the second peer joined the document, the editor
+  server locked the document on the first one and, since it never unlocked
+  it, dropped it 30 seconds later (disconnectReason 4007); rejoining, it
+  locked the document on the other peer. The carrier went down every half
+  minute while both peers were on it, and every rejoin stalled traffic for
+  up to 30 seconds, so long uploads such as a stream broke. The carrier now
+  unlocks the document for a joining peer (unLockDocument); a test pair held
+  a two-minute upload at about 4.8 Mbit/s without a drop.
+
 ## [0.3.2] / node-v1.2.2 - 2026-09-30 (meepo161/OpenFlux)
 
 ### Fixed
