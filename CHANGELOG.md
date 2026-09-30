@@ -3,6 +3,27 @@
 All notable changes to the OpenFlux core. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] / node-v1.3.0 - 2026-09-30 (meepo161/OpenFlux)
+
+### Added
+
+- Bonding: a client with `--bonding` (`Bonding = yes` in a .conf) uses all
+  its carriers at once, so documents on several networks (mobile data and
+  Wi-Fi) or several documents on one add their speeds up, and a carrier
+  that drops leaves the rest carrying on. TCP connections spread over the
+  carriers, one carrier each, and move when theirs is lost; UDP (SRT, QUIC)
+  is split packet by packet. The exit agrees by itself; exits before
+  node-v1.3.0 ignore the request and the client routes as before. Three
+  Mail.ru documents, three connections: 0.84 MB/s against 0.59 on one.
+- `Network = cellular|wifi|ethernet` per `[Transport]` binds a carrier to a
+  network: Android through the app (mobile data kept up next to Wi-Fi),
+  Windows by adapter type. The mobile library takes `"network"` per
+  transport, `"bonding"` next to them, and the app's NetworkBinder.
+
+### Fixed
+
+- `.conf` booleans took only true/false: `Bonding = yes` read as off.
+
 ## [0.3.3] / node-v1.2.3 - 2026-09-30 (meepo161/OpenFlux)
 
 ### Fixed

@@ -12,6 +12,10 @@ type TransportConfig struct {
 	ReconnectMultiplier  float64
 	MaxQueueSize         int
 	KeepAliveInterval    time.Duration
+	// Network the carrier dials through (netbind): "" is the default
+	// route, or netbind.NetworkCellular, NetworkWiFi, NetworkEthernet, so
+	// a bonded Session's carriers leave through different networks.
+	Network string
 }
 
 type Transport interface {
