@@ -12,7 +12,8 @@ const (
 	bondRateStart  = 256 * 1024 // bytes/s a link is assumed to carry until measured
 	bondRateFloor  = 16 * 1024  // a measured link never goes under this
 	bondWindow     = 250 * time.Millisecond
-	bondLostAfter  = 2 * time.Second
+	bondLostAfter  = 2 * time.Second        // at most
+	bondLostMin    = 300 * time.Millisecond // at least
 	bondRTTInitial = 200 * time.Millisecond
 )
 
@@ -122,16 +123,18 @@ func (b *bondScheduler) acked(a control.BondingAck, now time.Time) {
 	b.rollLocked(now)
 }
 
-// expire gives up on packets unacknowledged for bondLostAfter.
+// expire gives up on packets unacknowledged for four of their carrier's
+// round trips (bondLostMin to bondLostAfter): a carrier that died stops
+// taking new packets that soon.
 func (b *bondScheduler) expire(now time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for seq, p := range b.flight {
-		if now.Sub(p.at) < bondLostAfter {
+		l := b.linkLocked(p.link, now)
+		if now.Sub(p.at) < min(max(4*l.RTT, bondLostMin), bondLostAfter) {
 			continue
 		}
 		delete(b.flight, seq)
-		l := b.linkLocked(p.link, now)
 		l.InflightBytes -= p.size
 		l.RateBps = bondRateFloor
 		l.lost = true

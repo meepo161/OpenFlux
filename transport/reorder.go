@@ -28,16 +28,20 @@ type reorderBuffer struct {
 	deliver  func([]byte)
 	started  bool
 	next     uint64
-	pending  map[uint64][]byte
-	gapSince time.Time
+	pending  map[uint64]heldPacket
 	lateness time.Duration // EWMA of how late gap-filling packets came
 	hold     time.Duration
+}
+
+type heldPacket struct {
+	p  []byte
+	at time.Time // arrival
 }
 
 func newReorderBuffer(deliver func([]byte)) *reorderBuffer {
 	return &reorderBuffer{
 		deliver:  deliver,
-		pending:  make(map[uint64][]byte),
+		pending:  make(map[uint64]heldPacket),
 		hold:     reorderHoldStart,
 		lateness: reorderHoldStart * 2 / 3,
 	}
@@ -58,29 +62,35 @@ func (r *reorderBuffer) push(seq uint64, p []byte, now time.Time) {
 		r.deliver(p)
 		return
 	case seq > r.next:
-		if len(r.pending) == 0 {
-			r.gapSince = now
-		}
-		r.pending[seq] = p
+		r.pending[seq] = heldPacket{p, now}
 		if len(r.pending) > reorderCapacity {
-			r.skipLocked(now)
+			oldest, _ := r.oldestLocked()
+			r.next = oldest
+			r.drainLocked()
 		}
 		return
 	}
-	if len(r.pending) > 0 {
-		r.learnLocked(now.Sub(r.gapSince))
+	if oldest, ok := r.oldestLocked(); ok {
+		r.learnLocked(now.Sub(r.pending[oldest].at))
 	}
 	r.deliver(p)
 	r.next++
-	r.drainLocked(now)
+	r.drainLocked()
 }
 
-// tick gives up on a gap older than hold.
+// tick gives up on every gap that packets after it have waited out hold
+// behind. A carrier that died with packets in flight leaves gaps all
+// through the stream: they go together, not one hold each.
 func (r *reorderBuffer) tick(now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(r.pending) > 0 && now.Sub(r.gapSince) >= r.hold {
-		r.skipLocked(now)
+	for {
+		oldest, ok := r.oldestLocked()
+		if !ok || now.Sub(r.pending[oldest].at) < r.hold {
+			return
+		}
+		r.next = oldest
+		r.drainLocked()
 	}
 }
 
@@ -95,35 +105,30 @@ func (r *reorderBuffer) reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.started = false
-	r.pending = make(map[uint64][]byte)
+	r.pending = make(map[uint64]heldPacket)
 }
 
-// skipLocked moves past the gap to the oldest pending packet.
-func (r *reorderBuffer) skipLocked(now time.Time) {
-	oldest := uint64(0)
+// oldestLocked is the lowest sequence held behind a gap.
+func (r *reorderBuffer) oldestLocked() (uint64, bool) {
+	oldest, ok := uint64(0), false
 	for seq := range r.pending {
-		if oldest == 0 || seq < oldest {
-			oldest = seq
+		if !ok || seq < oldest {
+			oldest, ok = seq, true
 		}
 	}
-	r.next = oldest
-	r.drainLocked(now)
+	return oldest, ok
 }
 
-// drainLocked delivers the in-order run at next; a gap left behind starts
-// its own clock.
-func (r *reorderBuffer) drainLocked(now time.Time) {
+// drainLocked delivers the in-order run at next.
+func (r *reorderBuffer) drainLocked() {
 	for {
-		p, ok := r.pending[r.next]
+		h, ok := r.pending[r.next]
 		if !ok {
-			break
+			return
 		}
 		delete(r.pending, r.next)
-		r.deliver(p)
+		r.deliver(h.p)
 		r.next++
-	}
-	if len(r.pending) > 0 {
-		r.gapSince = now
 	}
 }
 
