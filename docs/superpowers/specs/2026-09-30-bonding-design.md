@@ -104,10 +104,10 @@ Same profile fields (network choice adds Ethernet); the `.conf` gets
 ## Testing
 
 - Unit (transport): links with set rate/latency/drop; the scheduler's split
-  follows the acknowledged rates; acks encode and decode; the reorder buffer restores order and skips a lost
-  number after `hold`; a link dying mid-flow stalls less than `hold` plus
-  one keepalive; a bonding client with an old exit never stripes; the exit
-  reorders only after agreement.
+  follows the acknowledged rates and keeps low load on the quickest link;
+  acks encode and decode; a TCP connection stays on one carrier while
+  several spread; UDP is split; a connection moves off a dead carrier; a
+  bonding client with an old exit never splits.
 - Unit (netbind): `DialContextFor` calls the binder with the network.
 - Live: two local peers over two Mail.ru documents, one TCP flow, against
   one document.
