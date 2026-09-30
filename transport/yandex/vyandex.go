@@ -57,6 +57,8 @@ type VolgaConfig struct {
 	// (iOS caps it at 50 MB) cannot afford them.
 	WSReadBufferSize  int
 	WSWriteBufferSize int
+	// Network the relay and listener dial through (TransportConfig.Network).
+	Network string
 }
 
 func DefaultVolgaConfig() VolgaConfig {
@@ -548,7 +550,7 @@ type relayClient struct {
 
 func newRelayClient(auth *atomic.Pointer[volgaAuth], cfg VolgaConfig, stats *VolgaStats) *relayClient {
 	tr := &http.Transport{
-		DialContext:         netbind.DialContext,
+		DialContext:         netbind.DialContextFor(cfg.Network),
 		MaxIdleConns:        cfg.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.MaxIdleConnsPerHost,
 		IdleConnTimeout:     cfg.IdleConnTimeout,
@@ -969,7 +971,7 @@ func (w *wsListener) connect() error {
 	header.Set("Cookie", strings.Join(cookieParts, "; "))
 
 	dialer := websocket.Dialer{
-		NetDialContext:   netbind.DialContext,
+		NetDialContext:   netbind.DialContextFor(w.config.Network),
 		HandshakeTimeout: w.config.WSHandshakeTimeout,
 		ReadBufferSize:   w.config.WSReadBufferSize,
 		WriteBufferSize:  w.config.WSWriteBufferSize,
@@ -1174,6 +1176,7 @@ func NewYandexVolgaTransport(docURL string, cfg transport.TransportConfig) *Yand
 // resource profile, e.g. SlimVolgaConfig on a phone.
 func NewYandexVolgaTransportWithConfig(docURL string, cfg transport.TransportConfig, volga VolgaConfig) *YandexVolgaTransport {
 	jar, _ := cookiejar.New(nil)
+	volga.Network = cfg.Network
 	return &YandexVolgaTransport{
 		BaseTransport: transport.NewBaseTransport(cfg),
 		docURL:        docURL,

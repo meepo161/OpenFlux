@@ -206,6 +206,9 @@ func main() {
 	flag.StringVar(&maxUid, "maxUid", "", "MAX call user id. If u use MAX transport")
 	directDial := flag.String("direct-dial", "", "DirectTransport: exit address to dial (client). Requires --encryption-key-file")
 	directListen := flag.String("direct-listen", "", "DirectTransport: local address to listen on (exit). Requires --encryption-key-file")
+	bondingFlag := flag.Bool("bonding", false,
+		"Client: split the Session over all its carriers at once, their speeds adding up (an exit that bonds, node-v1.3.0+, is needed; "+
+			"others keep routing by flow). Bind carriers to networks with Network = in the .conf")
 	transportsFlag := flag.String("transports", "",
 		"Comma-separated list of transports with priorities, e.g. "+
 			"\"direct:100,yandex:50\". If empty, --transport is used as a single transport.")
@@ -406,6 +409,9 @@ DEPRECATED (removed in v2)
 				*debug = 1
 			}
 		}
+		if v, ok := confValue(conf.Interface, "Bonding"); ok && !setFlags["bonding"] {
+			*bondingFlag = confBool(v, false)
+		}
 		if v, ok := confValue(conf.Interface, "Sensitive"); ok && !setFlags["sensitive"] && !setFlags["sensetive"] {
 			*sensitive = confBool(v, *sensitive)
 		}
@@ -436,6 +442,15 @@ DEPRECATED (removed in v2)
 					"uid":   t.Values["UID"],
 					"exit":  isExit,
 				}
+			}
+			if n := t.Values["Network"]; n != "" {
+				if !validNetwork(n) {
+					log.Fatalf("--config: [Transport %s] Network = %q: cellular, wifi or ethernet", t.Name, n)
+				}
+				if spec.Params == nil {
+					spec.Params = map[string]interface{}{}
+				}
+				spec.Params["network"] = n
 			}
 			confTransports = append(confTransports, spec)
 		}
@@ -737,6 +752,10 @@ DEPRECATED (removed in v2)
 		}
 		if classicCompat {
 			sess.SetClassic(*codec)
+		}
+		if *bondingFlag && *role == roleClient {
+			sess.SetBonding(true)
+			log.Printf("Bonding: requested; the carriers are split once the exit agrees")
 		}
 		sess.SetAlternateContexts(contextAlternates)
 

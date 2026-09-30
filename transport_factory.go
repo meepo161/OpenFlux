@@ -41,6 +41,10 @@ func transportFactory(baseCfg transport.TransportConfig, isExit bool) manager.Fa
 		if cfg == nil {
 			return nil, fmt.Errorf("factory: nil config")
 		}
+		baseCfg := baseCfg
+		if n, _ := cfg.Params["network"].(string); n != "" {
+			baseCfg.Network = n // this carrier's network (bonding)
+		}
 		switch cfg.Type {
 		case "yandex":
 			return yandex.NewYandexDocsTransport(cfg.URL, baseCfg), nil

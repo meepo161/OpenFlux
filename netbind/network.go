@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -63,6 +64,17 @@ func DialContextFor(network string) func(ctx context.Context, n, address string)
 	return func(ctx context.Context, n, address string) (net.Conn, error) {
 		return DialerFor(network, 30*time.Second).DialContext(ctx, n, address)
 	}
+}
+
+// HTTPTransport is an http.Client transport on network; nil (the default
+// transport) for "".
+func HTTPTransport(network string) http.RoundTripper {
+	if network == "" {
+		return nil
+	}
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DialContext = DialContextFor(network)
+	return t
 }
 
 func bindNetwork(network, address string, c syscall.RawConn) error {

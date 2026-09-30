@@ -178,7 +178,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 
 		dialer := websocket.Dialer{
 			HandshakeTimeout: 15 * time.Second,
-			NetDialContext: netbind.Wrap(&net.Dialer{
+			NetDialContext: netbind.WrapFor(t.network(), &net.Dialer{
 				Timeout:   10 * time.Second,
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
@@ -480,7 +480,7 @@ func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, erro
 			return MailruDocsInfo{}, err
 		}
 	}
-	client := &http.Client{Jar: jar, Timeout: 15 * time.Second}
+	client := &http.Client{Jar: jar, Timeout: 15 * time.Second, Transport: netbind.HTTPTransport(t.network())}
 
 	reqBody := map[string]string{
 		"x-email":  "anonym",
@@ -622,4 +622,12 @@ func (t *MailruDocsTransport) ApplyCookies(values map[string]string) error {
 		t.scheduleReconnect(0)
 	}
 	return nil
+}
+
+// network is the network this carrier dials through (TransportConfig.Network).
+func (t *MailruDocsTransport) network() string {
+	if t.BaseTransport == nil {
+		return ""
+	}
+	return t.GetConfig().Network
 }
