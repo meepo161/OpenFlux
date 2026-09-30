@@ -3,6 +3,18 @@
 All notable changes to the OpenFlux core. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.2] / node-v1.2.2 - 2026-09-30 (meepo161/OpenFlux)
+
+### Fixed
+
+- A node set up by the wizard (.conf carriers) or with --transports served
+  Session clients only: a client that speaks classic, such as the iOS app,
+  was dropped on every carrier ("serves Session peers only") and never got
+  through. Such an exit now also serves classic clients on any of its
+  carriers, as a --transport=X exit does; --negotiate stays Session-only.
+  The exit serves one client at a time, and a classic client is answered
+  only while no Session client is active on the channel.
+
 ## [0.3.1] / node-v1.2.1 - 2026-09-29 (meepo161/OpenFlux)
 
 ### Fixed

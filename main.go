@@ -707,19 +707,9 @@ DEPRECATED (removed in v2)
 	// sections in a .conf describe one just like --transports.
 	//
 	// A classic setup (--transport=X) with a key runs as a Session too,
-	// with classic compatibility: a client falls back to the classic
-	// layering while the exit does not answer the handshake and upgrades
-	// once it does; an exit serves classic clients and Session clients.
-	// Only --negotiate is strict. Without a key only classic is possible.
+	// with classic compatibility (see classicCompatible).
 	configuredSession := *negotiate || *transportsFlag != "" || len(confTransports) > 0
-	classicCompat := false
-	switch {
-	case *role != roleClient && *role != roleExit:
-	case !configuredSession && secret != "":
-		classicCompat = true
-	case configuredSession && !*negotiate && *role == roleClient && len(specs) == 1:
-		classicCompat = true
-	}
+	classicCompat := classicCompatible(*role, configuredSession, *negotiate, secret != "", len(specs))
 	if configuredSession || classicCompat {
 		if secret == "" {
 			log.Fatal("--transports/--negotiate/.conf transports require --encryption-key-file")
