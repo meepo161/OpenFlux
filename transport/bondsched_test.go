@@ -120,3 +120,33 @@ func TestBondTriesANewLink(t *testing.T) {
 		t.Fatalf("picked %q over an idle new link", got)
 	}
 }
+
+// At low load every packet takes the quickest carrier: splitting then would
+// only reorder packets for nothing.
+func TestBondLowLoadStaysOnTheQuickestLink(t *testing.T) {
+	b := newBondScheduler()
+	now := time.Unix(1000, 0)
+	// Teach the scheduler the round trips: mailru 60 ms, yandex 200 ms.
+	var ack control.BondingAck
+	for i := uint64(1); i <= 20; i++ {
+		name := "mailru"
+		d := 60 * time.Millisecond
+		if i%2 == 0 {
+			name, d = "yandex", 200*time.Millisecond
+		}
+		b.sent(i, name, 1200, now)
+		ack.Set(i)
+		b.acked(ack, now.Add(d))
+		ack = control.BondingAck{}
+	}
+	// A trickle: one packet at a time, acked before the next.
+	for i := uint64(100); i < 200; i++ {
+		now = now.Add(100 * time.Millisecond)
+		if got := b.pick([]string{"yandex", "mailru"}, 1200, now); got != "mailru" {
+			t.Fatalf("packet %d went to %q at low load", i, got)
+		}
+		b.sent(i, "mailru", 1200, now)
+		ack.Set(i)
+		b.acked(ack, now.Add(60*time.Millisecond))
+	}
+}

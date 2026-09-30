@@ -12,16 +12,19 @@ const (
 	bondRateStart  = 256 * 1024 // bytes/s a link is assumed to carry until measured
 	bondRateFloor  = 16 * 1024  // a measured link never goes under this
 	bondWindow     = 250 * time.Millisecond
+	bondRateWins   = 8 // the rate is the best of this many windows (2 s)
+	bondMinRTTAge  = 10 * time.Second
 	bondLostAfter  = 2 * time.Second        // at most
-	bondLostMin    = 300 * time.Millisecond // at least
-	bondRTTInitial = 200 * time.Millisecond
+	bondLostMin    = time.Second            // at least
+	bondRTTInitial = 200 * time.Millisecond // until acks tell
 )
 
 // BondLinkStats is what the scheduler knows about one carrier.
 type BondLinkStats struct {
-	RateBps       float64       // delivered bytes per second, EWMA
+	RateBps       float64       // bytes per second it delivers when busy
 	InflightBytes int           // sent, not yet acknowledged
 	RTT           time.Duration // send to ack, EWMA
+	MinRTT        time.Duration // lowest send to ack lately: the carrier's own delay
 }
 
 type bondLink struct {
@@ -29,6 +32,12 @@ type bondLink struct {
 	winStart time.Time
 	winBytes int
 	winBusy  bool // the link had data in flight during the window
+	// wins: delivered bytes/s of the last busy windows. The rate is their
+	// maximum: a window in which little was sent says the link was idle,
+	// not slow.
+	wins   [bondRateWins]float64
+	winIdx int
+	minAt  time.Time
 	// lost: packets on it went unacknowledged. It gets one packet at a
 	// time, a probe, until an ack shows it delivers again.
 	lost bool
@@ -40,15 +49,22 @@ type bondSent struct {
 	at   time.Time
 }
 
-// bondScheduler splits a bonded Session's packets over its carriers. It
-// cannot see a carrier's speed from the sending side (carriers queue
-// internally), so it learns it from the peer's acks: every packet is
-// remembered with its carrier until acked, which gives each carrier's
-// bytes in flight and its delivered rate. A packet goes where it is due to
-// arrive first: the carrier with the least in flight for its rate. A
-// carrier that stops delivering keeps its bytes in flight and so stops
-// getting new ones; after bondLostAfter they count as lost and its rate
-// drops to the floor and it gets single probe packets until one is acked.
+// bondScheduler splits a bonded Session's packets over its carriers so
+// that each packet arrives as early as it can, which also keeps them close
+// to their order: TCP inside the tunnel takes packets that overtake each
+// other for losses and slows down.
+//
+// A packet goes to the carrier where it is due first: half the carrier's
+// own round trip (MinRTT) plus the time to deliver what is queued on it
+// (in flight / rate). At low load that is always the quickest carrier; the
+// others join only once its queue makes them quicker, which is when their
+// speeds add up.
+//
+// Rates come from the peer's acks (carriers queue internally, so the
+// sending side cannot see their speed): every packet is remembered with
+// its carrier until acked. A carrier that stops delivering keeps its bytes
+// in flight and so stops getting new ones; after a few round trips they
+// count as lost and it gets single probe packets until one is acked.
 type bondScheduler struct {
 	mu     sync.Mutex
 	links  map[string]*bondLink
@@ -62,7 +78,7 @@ func newBondScheduler() *bondScheduler {
 func (b *bondScheduler) linkLocked(name string, now time.Time) *bondLink {
 	l := b.links[name]
 	if l == nil {
-		l = &bondLink{BondLinkStats: BondLinkStats{RateBps: bondRateStart, RTT: bondRTTInitial}, winStart: now}
+		l = &bondLink{BondLinkStats: BondLinkStats{RateBps: bondRateStart, RTT: bondRTTInitial, MinRTT: bondRTTInitial}, winStart: now}
 		b.links[name] = l
 	}
 	return l
@@ -73,21 +89,29 @@ func (b *bondScheduler) linkLocked(name string, now time.Time) *bondLink {
 func (b *bondScheduler) pick(links []string, size int, now time.Time) string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	best, bestCost := "", 0.0
+	best, bestAt := "", 0.0
 	for _, name := range links {
 		l := b.linkLocked(name, now)
 		if l.lost && l.InflightBytes > 0 {
 			continue
 		}
-		cost := float64(l.InflightBytes+size) / l.RateBps
-		if best == "" || cost < bestCost {
-			best, bestCost = name, cost
+		at := l.MinRTT.Seconds()/2 + float64(l.InflightBytes+size)/l.RateBps
+		if best == "" || at < bestAt {
+			best, bestAt = name, at
 		}
 	}
 	if best == "" && len(links) > 0 {
 		best = links[0] // every link is being probed: keep sending
 	}
 	return best
+}
+
+// isLost reports whether link's packets went unacknowledged lately.
+func (b *bondScheduler) isLost(link string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	l := b.links[link]
+	return l != nil && l.lost
 }
 
 // sent records packet seq as gone out on link.
@@ -118,7 +142,11 @@ func (b *bondScheduler) acked(a control.BondingAck, now time.Time) {
 		l.InflightBytes -= p.size
 		l.winBytes += p.size
 		l.lost = false
-		l.RTT += (now.Sub(p.at) - l.RTT) / 8
+		rtt := now.Sub(p.at)
+		l.RTT += (rtt - l.RTT) / 8
+		if rtt < l.MinRTT || now.Sub(l.minAt) > bondMinRTTAge {
+			l.MinRTT, l.minAt = rtt, now
+		}
 	}
 	b.rollLocked(now)
 }
@@ -136,15 +164,13 @@ func (b *bondScheduler) expire(now time.Time) {
 		}
 		delete(b.flight, seq)
 		l.InflightBytes -= p.size
-		l.RateBps = bondRateFloor
 		l.lost = true
 	}
 	b.rollLocked(now)
 }
 
 // rollLocked closes each link's rate window once it is bondWindow old.
-// Only a window with data in flight says anything about the link's speed:
-// an idle link keeps its rate.
+// Only a window with data in flight says anything about the link's speed.
 func (b *bondScheduler) rollLocked(now time.Time) {
 	for _, l := range b.links {
 		el := now.Sub(l.winStart)
@@ -152,8 +178,13 @@ func (b *bondScheduler) rollLocked(now time.Time) {
 			continue
 		}
 		if l.winBusy {
-			sample := float64(l.winBytes) / el.Seconds()
-			l.RateBps = max(l.RateBps+(sample-l.RateBps)/4, bondRateFloor)
+			l.wins[l.winIdx] = float64(l.winBytes) / el.Seconds()
+			l.winIdx = (l.winIdx + 1) % bondRateWins
+			best := 0.0
+			for _, w := range l.wins {
+				best = max(best, w)
+			}
+			l.RateBps = max(best, bondRateFloor)
 		}
 		l.winStart, l.winBytes, l.winBusy = now, 0, l.InflightBytes > 0
 	}

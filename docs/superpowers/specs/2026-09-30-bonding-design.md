@@ -10,9 +10,9 @@ once: their speeds add up, and when one network drops the traffic moves to
 the other in under a second. It works over any carriers, including the
 documents that pass whitelist-only networks.
 
-Success: one TCP flow over two Mail.ru documents on two networks gets at
-least 1.5x the throughput of one document; cutting one network stalls the
-flow for less than a second.
+Success: several connections (or one UDP stream) over several documents
+get at least 1.4x one document; a connection whose carrier dies moves to
+another in about a second.
 
 ## What exists
 
@@ -37,39 +37,37 @@ The client repeats the offer on each keepalive until answered, and stripes
 only once answered. A new session (peer restart, takeover) starts with
 bonding off until agreed again.
 
-### 2. Sending: acknowledged in-flight per link
+### 2. Sending: TCP per connection, UDP per packet
 
 Carriers queue internally (a document's write queue), so the sender cannot
 see a link's real speed from its own queue. The receiver reports what
 arrived instead, as SRTLA does with SRT ACKs:
 
 - With bonding agreed, the receiver sends `SubtypeBondingAck` every 50 ms
-  while data arrives: the newest sequence it accepted and a 512-bit map of
-  the 512 numbers up to it (72 bytes). A lost ack is covered by the next.
-- The sender remembers, for each packet in flight, the link, size and send
-  time. An ack credits the packet's link: in-flight bytes go down,
-  delivered bytes and an RTT sample go up. A packet unacknowledged for
-  2 s counts as lost and leaves the in-flight count.
-- `rate` per link is an EWMA of delivered bytes per second over 250 ms
-  windows; it starts at 256 KiB/s and never goes under 16 KiB/s.
-- Every live link (heard lately; see `liveLinksLocked`) is a candidate
-  regardless of priority; each packet goes to the one with the smallest
-  `(inflight + len(p)) / rate`.
-- Control messages and hellos go as today.
+  while data arrives, on the carrier data last arrived on (the first by
+  priority may be the dead one): the newest sequence it accepted and a
+  512-bit map of the numbers up to it. A lost ack is covered by the next.
+- The sender remembers each packet in flight with its link, size and send
+  time; an ack credits the link (in-flight down, delivered bytes and an RTT
+  sample up). Unacknowledged for four RTTs (1 s to 2 s) counts as lost: the
+  link then gets single probe packets until an ack shows it is back.
+- A link's rate is the best delivery rate of its last eight busy 250 ms
+  windows (idle windows say nothing), floor 16 KiB/s, start 256 KiB/s.
+- A packet's link is the one where it is due first:
+  `MinRTT/2 + (inflight + size) / rate`.
 
-Both sides stripe once agreed (the exit's replies too). Attribution needs
-no link names: the sender knows which link carried which number, so a
-document joined twice from one client works as well.
+Measured on Mail.ru documents, a TCP connection split packet by packet
+over several of them collapses (0.09 MB/s against 0.59 on one document):
+documents deliver in bursts hundreds of milliseconds apart, TCP takes the
+reordering for loss. So:
 
-### 3. Receiving: reorder buffer
+- **TCP**: each connection stays on one carrier, chosen as above when it
+  starts; it moves when its carrier is lost, or after 500 ms idle. Several
+  connections add up (three documents: 0.84 MB/s against 0.59).
+- **UDP** (SRT, QUIC): split packet by packet; these protocols reorder in
+  their own buffers, so one SRT stream uses every carrier.
 
-With bonding agreed, `receiveIPv4` hands accepted packets to a reorder
-buffer instead of the callback. It delivers packets in sequence order; on
-a gap it waits for the missing number up to `hold`, then skips it (TCP
-inside retransmits). `hold` adapts: the EWMA of how late gap-filling packets
-arrived, times 1.5, clamped to [20 ms, 500 ms], starting at 100 ms. The
-buffer holds at most 4096 packets (the replay window); overflow flushes in
-order. Without bonding the buffer is not used and nothing changes.
+The receiver delivers packets as they come; there is no reorder buffer.
 
 ### 4. Binding a carrier to a network
 

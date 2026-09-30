@@ -973,7 +973,7 @@ func (s *Session) Send(p []byte) error {
 		Data:  &control.DataTail{Sequence: seq},
 	}
 	links := s.liveLinksLocked()
-	bonded := s.bondPickLocked(links, seq, control.EnvelopeSize+len(p))
+	bonded := s.bondPickLocked(links, seq, p, control.EnvelopeSize+len(p))
 	s.mu.Unlock()
 
 	if len(links) == 0 {
@@ -1425,16 +1425,12 @@ func (s *Session) receiveIPv4(link *transportLink, p []byte, env *control.Envelo
 	}
 	link.lastHeard = time.Now()
 	cb := s.dataCallback
-	reorder := s.bondReceiveLocked(env.Data.Sequence)
+	s.bondAckLocked(link, env.Data.Sequence)
 	s.mu.Unlock()
 	n := s.cntDataRecv.Add(1)
 	if n == 1 || n%100 == 0 {
 		utils.Debugf("[SESSION] recv IPv4 #%d seq=%d from %q size=%d proto=%d",
 			n, env.Data.Sequence, link.name, len(payload), payload[9])
-	}
-	if reorder != nil {
-		reorder.push(env.Data.Sequence, append([]byte(nil), payload...), time.Now())
-		return
 	}
 	if cb != nil {
 		cb(append([]byte(nil), payload...))

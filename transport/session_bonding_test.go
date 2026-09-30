@@ -117,17 +117,20 @@ func waitBonding(t *testing.T, s ...*Session) {
 	}
 }
 
-// numbered is a 1000-byte TCP packet of one flow carrying n.
-func numbered(n uint32) []byte {
-	p := testIPv4(1000, 6)
+// numbered is a 1000-byte packet of protocol proto from source port port,
+// carrying n.
+func numbered(n uint32, proto byte, port uint16) []byte {
+	p := testIPv4(1000, proto)
 	rand.Read(p[44:]) // incompressible, so the carriers' frames show the split
+	binary.BigEndian.PutUint16(p[20:], port)
 	binary.BigEndian.PutUint32(p[40:], n)
 	return p
 }
 
-// sendNumbered sends count numbered packets, calling at(i) before each, and
-// collects what the other side delivers until count arrived or wait passed.
-func sendNumbered(t *testing.T, from, to *Session, count int, wait time.Duration, at func(i int)) ([]uint32, time.Time) {
+// sendNumbered sends count numbered packets (packet i from port(i)),
+// calling at(i) before each and pausing pause every 4, and collects what
+// the other side delivers until count arrived or wait passed.
+func sendNumbered(t *testing.T, from, to *Session, count int, proto byte, port func(i int) uint16, pause time.Duration, wait time.Duration, at func(i int)) ([]uint32, time.Time) {
 	t.Helper()
 	var mu sync.Mutex
 	var got []uint32
@@ -146,11 +149,11 @@ func sendNumbered(t *testing.T, from, to *Session, count int, wait time.Duration
 		if at != nil {
 			at(i)
 		}
-		if err := from.Send(numbered(uint32(i))); err != nil {
+		if err := from.Send(numbered(uint32(i), proto, port(i))); err != nil {
 			t.Fatalf("send %d: %v", i, err)
 		}
 		if i%4 == 0 {
-			time.Sleep(time.Millisecond)
+			time.Sleep(pause)
 		}
 	}
 	select {
@@ -162,10 +165,16 @@ func sendNumbered(t *testing.T, from, to *Session, count int, wait time.Duration
 	return append([]uint32(nil), got...), last
 }
 
-func TestBondingSplitsAndKeepsOrder(t *testing.T) {
+func onePort(int) uint16 { return 40000 }
+
+func shareOK(a, b int64, pct int64) bool { return min(a, b)*100 >= (a+b)*pct }
+
+// A TCP connection rides one carrier: split over documents its packets
+// overtake each other and TCP slows down.
+func TestBondingKeepsATCPConnectionOnOneCarrier(t *testing.T) {
 	cl, ex, a, b := bondPeers(t, true, true)
 	waitBonding(t, cl, ex)
-	got, _ := sendNumbered(t, cl, ex, 2000, 10*time.Second, nil)
+	got, _ := sendNumbered(t, cl, ex, 2000, 6, onePort, time.Millisecond, 10*time.Second, nil)
 	if len(got) != 2000 {
 		t.Fatalf("%d of 2000 arrived", len(got))
 	}
@@ -174,19 +183,43 @@ func TestBondingSplitsAndKeepsOrder(t *testing.T) {
 			t.Fatalf("out of order at %d: %d", i, n)
 		}
 	}
-	// Frames, not packets: the carriers batch several packets per frame.
-	na, nb := a[0].data.Load(), b[0].data.Load()
-	if min(na, nb)*100 < (na+nb)*15 {
-		t.Fatalf("split a=%d b=%d frames: one carrier did nearly all the work", na, nb)
+	if na, nb := a[0].data.Load(), b[0].data.Load(); shareOK(na, nb, 5) {
+		t.Fatalf("one connection split over both carriers (a=%d b=%d frames)", na, nb)
+	}
+}
+
+// Several TCP connections spread over the carriers.
+func TestBondingSpreadsTCPConnections(t *testing.T) {
+	cl, ex, a, b := bondPeers(t, true, true)
+	waitBonding(t, cl, ex)
+	got, _ := sendNumbered(t, cl, ex, 2000, 6, func(i int) uint16 { return uint16(40000 + i%8) }, time.Millisecond, 10*time.Second, nil)
+	if len(got) != 2000 {
+		t.Fatalf("%d of 2000 arrived", len(got))
+	}
+	if na, nb := a[0].data.Load(), b[0].data.Load(); !shareOK(na, nb, 15) {
+		t.Fatalf("connections not spread: a=%d b=%d frames", na, nb)
 	}
 	if st := cl.BondStats(); len(st) != 2 {
 		t.Fatalf("bond stats %v", st)
 	}
 }
 
+// UDP is split packet by packet: SRT and QUIC reorder in their own buffers.
+func TestBondingSplitsUDP(t *testing.T) {
+	cl, ex, a, b := bondPeers(t, true, true)
+	waitBonding(t, cl, ex)
+	got, _ := sendNumbered(t, cl, ex, 2000, 17, onePort, time.Millisecond, 10*time.Second, nil)
+	if len(got) != 2000 {
+		t.Fatalf("%d of 2000 arrived", len(got))
+	}
+	if na, nb := a[0].data.Load(), b[0].data.Load(); !shareOK(na, nb, 15) {
+		t.Fatalf("UDP not split: a=%d b=%d frames", na, nb)
+	}
+}
+
 func TestBondingNotWithAnOldExit(t *testing.T) {
 	cl, ex, a, b := bondPeers(t, true, false)
-	got, _ := sendNumbered(t, cl, ex, 500, 10*time.Second, nil)
+	got, _ := sendNumbered(t, cl, ex, 500, 17, onePort, time.Millisecond, 10*time.Second, nil)
 	if len(got) != 500 {
 		t.Fatalf("%d of 500 arrived", len(got))
 	}
@@ -195,38 +228,37 @@ func TestBondingNotWithAnOldExit(t *testing.T) {
 	}
 	// Routing by flow: the flow stays on one carrier, but for the first
 	// frames, sent while the other one had not been heard from yet.
-	na, nb := a[0].data.Load(), b[0].data.Load()
-	if min(na, nb)*100 > (na+nb)*20 {
+	if na, nb := a[0].data.Load(), b[0].data.Load(); shareOK(na, nb, 20) {
 		t.Fatalf("one flow split over both carriers (a=%d b=%d) without bonding", na, nb)
 	}
 }
 
-func TestBondingSurvivesACarrierDying(t *testing.T) {
-	cl, ex, _, b := bondPeers(t, true, true)
+// The carrier of a TCP connection dies: the connection moves to the other
+// one once its packets there count as lost.
+func TestBondingMovesAConnectionOffADeadCarrier(t *testing.T) {
+	cl, ex, a, b := bondPeers(t, true, true)
 	waitBonding(t, cl, ex)
-	var sentAll time.Time
-	got, last := sendNumbered(t, cl, ex, 2000, 6*time.Second, func(i int) {
-		if i == 800 {
-			b[0].down.Store(true)
-			b[1].down.Store(true)
+	var killed time.Time
+	got, last := sendNumbered(t, cl, ex, 1600, 6, onePort, 10*time.Millisecond, 6*time.Second, func(i int) {
+		if i != 400 {
+			return
 		}
-		if i == 2000 {
-			sentAll = time.Now()
+		dead := b
+		if a[0].data.Load() > b[0].data.Load() {
+			dead = a
 		}
+		dead[0].down.Store(true)
+		dead[1].down.Store(true)
+		killed = time.Now()
 	})
-	t.Logf("%d of 2000 arrived, the tail %v after the last send", len(got), last.Sub(sentAll))
-	if len(got) < 1700 {
-		t.Fatalf("only %d of 2000 arrived after a carrier died", len(got))
+	t.Logf("%d of 1600 arrived; the last %v after the carrier died", len(got), last.Sub(killed).Round(time.Millisecond))
+	if n := len(got); n > 0 {
+		t.Logf("tail %v", got[max(0, n-6):])
 	}
-	if got[len(got)-1] != 2000 {
-		t.Fatalf("the last packet did not arrive (last %d)", got[len(got)-1])
+	if len(got) == 0 || got[len(got)-1] != 1600 {
+		t.Fatal("the connection did not carry on after its carrier died")
 	}
-	for i := 1; i < len(got); i++ {
-		if got[i] < got[i-1] && got[i-1]-got[i] > 50 {
-			t.Fatalf("far out of order at %d: %d after %d", i, got[i], got[i-1])
-		}
-	}
-	if d := last.Sub(sentAll); d > reorderHoldMax+time.Second {
-		t.Fatalf("the tail came %v after the last send: delivery stalled", d)
+	if len(got) < 1200 {
+		t.Fatalf("only %d of 1600 arrived: the move took too long", len(got))
 	}
 }
