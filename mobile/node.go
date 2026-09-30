@@ -56,7 +56,14 @@ func failure(err error, extra map[string]interface{}) string {
 // "trust": true, and the app calls again with it once the user agrees. A
 // changed key comes back with "mismatch": true and must not be trusted
 // silently.
-func NodeConnect(host string, port int, user, password, privateKey, passphrase, hostKey string) string {
+//
+// source picks the node's core: "fork" (default) or "official", see
+// provision.PinnedFor.
+func NodeConnect(host string, port int, user, password, privateKey, passphrase, hostKey, source string) string {
+	script, err := provision.PinnedFor(source)
+	if err != nil {
+		return failure(err, nil)
+	}
 	NodeDisconnect()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -72,7 +79,7 @@ func NodeConnect(host string, port int, user, password, privateKey, passphrase, 
 		return failure(err, nil)
 	}
 	appendLog("[NODE] SSH: подключено, загрузка скрипта установки")
-	if err := conn.FetchScript(provision.Pinned()); err != nil {
+	if err := conn.FetchScript(script); err != nil {
 		conn.Close()
 		return failure(err, nil)
 	}
@@ -144,9 +151,9 @@ func nodeTransports(transportsJSON string) ([]provision.ChannelTransport, error)
 }
 
 // NodePlan asks the VDS what installing the channel would change: {"plan"}.
-// transportsJSON: the carriers (see nodeTransports); autoUpdate: the
-// server's core updater.
-func NodePlan(channel string, port int, transportsJSON string, autoUpdate bool) string {
+// transportsJSON: the carriers (see nodeTransports); withCookies: the Yandex
+// sign-in goes to the node too; autoUpdate: the server's core updater.
+func NodePlan(channel string, port int, transportsJSON string, withCookies, autoUpdate bool) string {
 	conn, err := nodeConn()
 	if err != nil {
 		return failure(err, nil)
@@ -155,7 +162,7 @@ func NodePlan(channel string, port int, transportsJSON string, autoUpdate bool) 
 	if err != nil {
 		return failure(err, nil)
 	}
-	plan, err := conn.Plan(provision.Channel{ID: channel, Port: port, Transports: ts, AutoUpdate: autoUpdate})
+	plan, err := conn.Plan(provision.Channel{ID: channel, Port: port, Transports: ts, AutoUpdate: autoUpdate}, withCookies)
 	if err != nil {
 		return failure(err, nil)
 	}
@@ -164,7 +171,10 @@ func NodePlan(channel string, port int, transportsJSON string, autoUpdate bool) 
 
 // NodeApply installs and starts the channel. sudoPassword is only used when
 // the account needs one; a wrong one comes back with "sudo": true.
-func NodeApply(channel, transportsJSON, key string, port int, autoUpdate bool, sudoPassword string) string {
+// cookieHeader is the Yandex sign-in for the node ("" for none): the node
+// then opens the Yandex document as that account, which gets it past the
+// checks Yandex shows a server's address.
+func NodeApply(channel, transportsJSON, key string, port int, autoUpdate bool, sudoPassword, cookieHeader string) string {
 	conn, err := nodeConn()
 	if err != nil {
 		return failure(err, nil)
@@ -174,6 +184,11 @@ func NodeApply(channel, transportsJSON, key string, port int, autoUpdate bool, s
 		return failure(err, nil)
 	}
 	ch := provision.Channel{ID: channel, Transports: ts, Key: key, Port: port, AutoUpdate: autoUpdate}
+	if cookieHeader != "" {
+		if ch.Cookies, err = provision.ChannelCookies(ts, cookieHeader); err != nil {
+			return failure(err, nil)
+		}
+	}
 	appendLog("[NODE] Установка канала " + channel)
 	if err := conn.Apply(ch, sudoPassword); err != nil {
 		appendLog("[NODE] Установка не удалась")
@@ -181,6 +196,30 @@ func NodeApply(channel, transportsJSON, key string, port int, autoUpdate bool, s
 	}
 	appendLog("[NODE] Канал " + channel + " запущен")
 	return result(nil)
+}
+
+// NodeSetCookies gives an installed channel's node a new Yandex sign-in
+// and restarts it.
+func NodeSetCookies(channel, documentURL, cookieHeader, sudoPassword string) string {
+	conn, err := nodeConn()
+	if err != nil {
+		return failure(err, nil)
+	}
+	cookies, _, err := provision.CookieStore(documentURL, cookieHeader)
+	if err != nil {
+		return failure(err, nil)
+	}
+	if err := conn.SetCookies(channel, cookies, sudoPassword); err != nil {
+		return failure(err, map[string]interface{}{"sudo": errors.Is(err, provision.ErrSudoPassword)})
+	}
+	appendLog("[NODE] Вход в Яндекс передан каналу " + channel)
+	return result(nil)
+}
+
+// NodeSignedIn reports whether a WebView Cookie header holds a Yandex login.
+func NodeSignedIn(cookieHeader string) bool {
+	_, signedIn, err := provision.CookieStore("x", cookieHeader)
+	return err == nil && signedIn
 }
 
 // NodeRemove deletes the channel from the VDS (a failed verification's

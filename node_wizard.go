@@ -11,8 +11,8 @@ package main
 // Request:  {"id": 1, "method": "connect", "params": {...}}
 // Response: {"id": 1, "ok": true, ...} or {"id": 1, "ok": false, "error": "..."}
 //
-// Secrets (SSH and sudo passwords, private key, channel key) arrive only
-// on stdin and never go to the log or the command line.
+// Secrets (SSH and sudo passwords, private key, channel key, Yandex
+// cookies) arrive only on stdin and never go to the log or the command line.
 
 import (
 	"bufio"
@@ -45,14 +45,19 @@ type wizardParams struct {
 	HostKey      string `json:"hostKey"`
 	Channel      string `json:"channel"`
 	ChannelPort  int    `json:"channelPort"`
+	WithCookies  bool   `json:"withCookies"`
 	DocumentURL  string `json:"documentUrl"`
 	Key          string `json:"key"`
 	SudoPassword string `json:"sudoPassword"`
+	Cookies      string `json:"cookies"`
 	Name         string `json:"name"`
 	// Transports are the channel's carriers besides direct. Without them,
 	// DocumentURL alone means a Yandex document (older apps).
 	Transports []provision.ChannelTransport `json:"transports"`
 	AutoUpdate bool                         `json:"autoUpdate"`
+	// Source picks the node's core: "fork" (default) or "official", see
+	// provision.PinnedFor.
+	Source string `json:"source"`
 }
 
 // transports is the channel's carriers from the request.
@@ -63,7 +68,7 @@ func (p wizardParams) transports() []provision.ChannelTransport {
 	return p.Transports
 }
 
-// channel is the channel the request describes, its key aside.
+// channel is the channel the request describes, key and cookies aside.
 func (p wizardParams) channel() provision.Channel {
 	return provision.Channel{ID: p.Channel, Transports: p.transports(), Port: p.ChannelPort, AutoUpdate: p.AutoUpdate}
 }
@@ -74,7 +79,7 @@ type nodeWizard struct {
 	// Tests replace these to run without a VDS or Yandex.
 	dial      func(context.Context, provision.Target) (*provision.Conn, error)
 	checkDoc  func(string) (yandex.VolgaDocument, error)
-	newScript func() provision.Script
+	newScript func(source string) (provision.Script, error)
 	newRooms  func(context.Context) (string, error)
 }
 
@@ -82,7 +87,7 @@ func newNodeWizard() *nodeWizard {
 	return &nodeWizard{
 		dial:      provision.Dial,
 		checkDoc:  func(u string) (yandex.VolgaDocument, error) { return yandex.CheckVolgaDocument(u, nil) },
-		newScript: provision.Pinned,
+		newScript: provision.PinnedFor,
 		newRooms:  cupsonline.CreateRoomList,
 	}
 }
@@ -158,7 +163,7 @@ func (w *nodeWizard) handle(req wizardRequest) map[string]interface{} {
 		if err != nil {
 			return wizardFailure(err, nil)
 		}
-		plan, err := conn.Plan(p.channel())
+		plan, err := conn.Plan(p.channel(), p.WithCookies)
 		if err != nil {
 			return wizardFailure(err, nil)
 		}
@@ -170,7 +175,25 @@ func (w *nodeWizard) handle(req wizardRequest) map[string]interface{} {
 		}
 		ch := p.channel()
 		ch.Key = p.Key
+		if p.Cookies != "" {
+			if ch.Cookies, err = provision.ChannelCookies(ch.Transports, p.Cookies); err != nil {
+				return wizardFailure(err, nil)
+			}
+		}
 		if err := conn.Apply(ch, p.SudoPassword); err != nil {
+			return wizardFailure(err, map[string]interface{}{"sudo": errors.Is(err, provision.ErrSudoPassword)})
+		}
+		return wizardOK(nil)
+	case "setCookies":
+		conn, err := w.connected()
+		if err != nil {
+			return wizardFailure(err, nil)
+		}
+		cookies, _, err := provision.CookieStore(p.DocumentURL, p.Cookies)
+		if err != nil {
+			return wizardFailure(err, nil)
+		}
+		if err := conn.SetCookies(p.Channel, cookies, p.SudoPassword); err != nil {
 			return wizardFailure(err, map[string]interface{}{"sudo": errors.Is(err, provision.ErrSudoPassword)})
 		}
 		return wizardOK(nil)
@@ -183,6 +206,9 @@ func (w *nodeWizard) handle(req wizardRequest) map[string]interface{} {
 			return wizardFailure(err, map[string]interface{}{"sudo": errors.Is(err, provision.ErrSudoPassword)})
 		}
 		return wizardOK(nil)
+	case "signedIn":
+		_, signedIn, err := provision.CookieStore("x", p.Cookies)
+		return wizardOK(map[string]interface{}{"signedIn": err == nil && signedIn})
 	case "checkDocument":
 		return w.checkDocument(p.DocumentURL)
 	case "createRooms":
@@ -209,6 +235,10 @@ func (w *nodeWizard) handle(req wizardRequest) map[string]interface{} {
 // can compare the fingerprint; a changed key with "mismatch": true.
 func (w *nodeWizard) connect(p wizardParams) map[string]interface{} {
 	w.disconnect()
+	script, err := w.newScript(p.Source)
+	if err != nil {
+		return wizardFailure(err, nil)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	conn, err := w.dial(ctx, provision.Target{
@@ -222,7 +252,7 @@ func (w *nodeWizard) connect(p wizardParams) map[string]interface{} {
 		}
 		return wizardFailure(err, nil)
 	}
-	if err := conn.FetchScript(w.newScript()); err != nil {
+	if err := conn.FetchScript(script); err != nil {
 		conn.Close()
 		return wizardFailure(err, nil)
 	}

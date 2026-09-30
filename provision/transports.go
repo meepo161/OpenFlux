@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -16,8 +17,10 @@ import (
 // ChannelTransport is one of a channel's carriers besides direct, which
 // every channel has as the backup.
 type ChannelTransport struct {
-	// Type is vyandex (a Yandex document), mailru (a Mail.ru public
-	// document) or cupsonline (cups.online rooms).
+	// Type is vyandex (a Yandex document), yandex (the same document
+	// through the older Yandex Docs transport), mailru (a Mail.ru public
+	// document), boards (a Yandex board open to guests) or cupsonline
+	// (cups.online rooms).
 	Type string `json:"type"`
 	// URL is the document link, or cups.online's packed room list.
 	URL string `json:"url"`
@@ -25,13 +28,16 @@ type ChannelTransport struct {
 
 // transportPriority is what node-install.sh's write_node_conf gives each
 // carrier, and so what the channel's link must say too.
-var transportPriority = map[string]int{"vyandex": 100, "mailru": 90, "cupsonline": 70}
+var transportPriority = map[string]int{"vyandex": 100, "yandex": 95, "mailru": 90, "boards": 80, "cupsonline": 70}
 
 const directPriority = 50
 
 var (
 	volgaDocURL  = regexp.MustCompile(`^https://(docs|disk)\.yandex\.(ru|com|by|kz|uz)/edit/d/[A-Za-z0-9_-]{16,200}$`)
 	mailruDocURL = regexp.MustCompile(`^https://cloud\.mail\.ru/public/[A-Za-z0-9_-]{2,64}/[A-Za-z0-9_-]{2,128}$`)
+	// yandexDocURL: a document's edit link, or its public disk.yandex.ru/i/ one.
+	yandexDocURL = regexp.MustCompile(`^https://(docs|disk)\.yandex\.(ru|com|by|kz|uz)/(edit/d/[A-Za-z0-9_-]{16,200}|i/[A-Za-z0-9_-]{6,64})$`)
+	boardsURL    = regexp.MustCompile(`^https://boards\.yandex\.ru/whiteboard/\?hash=[0-9a-f]{32}$`)
 	cupsRoomList = regexp.MustCompile(`^[A-Za-z0-9_-]{8,}$`)
 )
 
@@ -57,10 +63,20 @@ func CheckTransports(ts []ChannelTransport) ([]ChannelTransport, error) {
 			if !volgaDocURL.MatchString(t.URL) {
 				return nil, errors.New("нужна ссылка на документ Яндекса вида https://docs.yandex.ru/edit/d/…")
 			}
+		case "yandex":
+			t.URL = cleanLink(t.URL)
+			if !yandexDocURL.MatchString(t.URL) {
+				return nil, errors.New("нужна ссылка на документ Яндекса вида https://docs.yandex.ru/edit/d/…")
+			}
 		case "mailru":
 			t.URL = cleanLink(t.URL)
 			if !mailruDocURL.MatchString(t.URL) {
 				return nil, errors.New("нужна публичная ссылка Mail.ru вида https://cloud.mail.ru/public/…/…")
+			}
+		case "boards":
+			t.URL = cleanBoardsLink(t.URL)
+			if !boardsURL.MatchString(t.URL) {
+				return nil, errors.New("нужна ссылка на доску вида https://boards.yandex.ru/whiteboard/?hash=…")
 			}
 		case "cupsonline":
 			if !cupsRoomList.MatchString(t.URL) || len(t.URL) > 4096 {
@@ -71,6 +87,19 @@ func CheckTransports(ts []ChannelTransport) ([]ChannelTransport, error) {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return transportPriority[out[i].Type] > transportPriority[out[j].Type] })
 	return out, nil
+}
+
+// cleanBoardsLink keeps a board link's hash, its only needed query value.
+func cleanBoardsLink(u string) string {
+	parsed, err := url.Parse(strings.TrimSpace(u))
+	if err != nil || parsed.Host != "boards.yandex.ru" {
+		return u
+	}
+	hash := parsed.Query().Get("hash")
+	if hash == "" {
+		return u
+	}
+	return "https://boards.yandex.ru/whiteboard/?hash=" + hash
 }
 
 func cleanLink(u string) string {
@@ -132,4 +161,20 @@ func transportLines(ts []ChannelTransport) string {
 		b.WriteString(t.Type + "=" + t.URL + "\n")
 	}
 	return b.String()
+}
+
+// ChannelCookies turns the app's Cookie header for the channel's Yandex
+// document into what Channel.Cookies takes (see CookieStore), keyed by the
+// document as the node's config names it.
+func ChannelCookies(ts []ChannelTransport, header string) (string, error) {
+	ts, err := CheckTransports(ts)
+	if err != nil {
+		return "", err
+	}
+	doc := TransportURL(ts, "vyandex")
+	if doc == "" {
+		return "", errors.New("вход в Яндекс нужен только каналу с документом Яндекса")
+	}
+	cookies, _, err := CookieStore(doc, header)
+	return cookies, err
 }

@@ -84,6 +84,8 @@ type CupsonlineConfig struct {
 	RoomCreatePause time.Duration
 
 	StatsInterval time.Duration
+	// Network the rooms' sockets dial through (TransportConfig.Network).
+	Network string
 }
 
 func DefaultCupsonlineConfig() CupsonlineConfig {
@@ -704,7 +706,7 @@ func (w *cupsWS) connectAndServe() error {
 	}
 
 	dialer := websocket.Dialer{
-		NetDialContext:   netbind.DialContext,
+		NetDialContext:   netbind.DialContextFor(w.config.Network),
 		HandshakeTimeout: w.config.WSHandshakeTimeout,
 		ReadBufferSize:   w.config.ReadBufferSize,
 		WriteBufferSize:  w.config.WriteBufferSize,
@@ -1124,6 +1126,7 @@ func NewCupsonlineTransport(rawURL string, cfg transport.TransportConfig, isClie
 		statsStart:    time.Now(),
 	}
 
+	t.config.Network = cfg.Network
 	t.baseURL = baseRoomURL
 	// Both roles accept a room list: the client always needs one, and an
 	// exit node given one re-joins those rooms instead of creating new

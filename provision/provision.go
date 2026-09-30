@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -105,6 +106,9 @@ type Channel struct {
 	Key        string
 	// Port is direct's port; 0 in a plan lets the script pick one.
 	Port int
+	// Cookies is the channel's Yandex sign-in for the node: the core's
+	// cookie store JSON, base64-encoded (see CookieStore). Empty: none.
+	Cookies string
 	// AutoUpdate turns the server's core updater on, or off: it is one
 	// timer for every channel on the server.
 	AutoUpdate bool
@@ -295,11 +299,14 @@ func (c *Conn) Probe() (*Probe, error) {
 }
 
 // Plan asks what apply would change: ch without its key, Port 0 lets the
-// script pick one.
-func (c *Conn) Plan(ch Channel) (*Plan, error) {
+// script pick one. withCookies adds the Yandex sign-in step.
+func (c *Conn) Plan(ch Channel, withCookies bool) (*Plan, error) {
 	cfg, err := ch.config()
 	if err != nil {
 		return nil, err
+	}
+	if withCookies {
+		cfg += "cookies=yes\n"
 	}
 	var p Plan
 	if err := c.script_("plan", []byte(cfg), &p); err != nil {
@@ -319,7 +326,40 @@ func (c *Conn) Apply(ch Channel, sudoPassword string) error {
 		return err
 	}
 	cfg += "key=" + ch.Key + "\n"
+	if ch.Cookies != "" {
+		cfg += "cookies=" + ch.Cookies + "\n"
+	}
 	return c.asRoot("apply", cfg, sudoPassword)
+}
+
+// SetCookies replaces an installed channel's Yandex sign-in (base64 cookie
+// store JSON, see CookieStore) and restarts its node.
+func (c *Conn) SetCookies(channel, cookies, sudoPassword string) error {
+	return c.asRoot("set-cookies", "channel="+channel+"\ncookies="+cookies+"\n", sudoPassword)
+}
+
+// CookieStore turns a Cookie header ("a=1; b=2", as the WebView keeps it
+// for the document) into what Channel.Cookies takes: the core's cookie
+// store JSON, keyed by the document URL like the node looks it up, then
+// base64. signedIn reports whether the header holds a Yandex login.
+func CookieStore(documentURL, header string) (cookies string, signedIn bool, err error) {
+	jar := map[string]string{}
+	for _, part := range strings.Split(header, ";") {
+		name, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok || name == "" || strings.ContainsAny(name+value, "\r\n") {
+			continue
+		}
+		jar[name] = value
+	}
+	if len(jar) == 0 {
+		return "", false, errors.New("нет cookies Яндекса")
+	}
+	raw, err := json.Marshal(map[string]map[string]string{documentURL: jar})
+	if err != nil {
+		return "", false, err
+	}
+	_, signedIn = jar["Session_id"]
+	return base64.StdEncoding.EncodeToString(raw), signedIn, nil
 }
 
 // Remove stops and deletes the channel; the last one also removes the

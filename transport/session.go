@@ -76,6 +76,8 @@ type Session struct {
 	cntClassicSent atomic.Uint64
 	cntClassicRecv atomic.Uint64
 	cntClassicDrop atomic.Uint64
+
+	bond bondState // see session_bonding.go
 }
 
 // ClassicMode is how a Session treats peers of the classic (pre-Session)
@@ -221,6 +223,7 @@ func NewSession(p PeerParameters, exit bool) (*Session, error) {
 		keepaliveInterval: 10 * time.Second,
 		linkTimeout:       30 * time.Second,
 	}
+	s.bond.want = exit // exits bond with clients that ask
 	if _, err := rand.Read(s.local[:]); err != nil {
 		return nil, err
 	}
@@ -289,6 +292,9 @@ func (s *Session) RemoveTransport(name string) error {
 		}
 	}
 	_ = link.batched.Stop()
+	if s.bond.sched != nil {
+		s.bond.sched.forget(name)
+	}
 	return nil
 }
 
@@ -353,8 +359,9 @@ func (s *Session) Start() error {
 			utils.Debugf("[SESSION] transport %q started (priority=%d)", link.name, link.priority)
 		}
 	}
-	s.wg.Add(1)
+	s.wg.Add(2)
 	go s.keepaliveLoop()
+	go s.bondLoop()
 	if exit {
 		utils.Debugf("[SESSION] exit: Start returning, waiting for a client")
 		return nil
@@ -966,6 +973,7 @@ func (s *Session) Send(p []byte) error {
 		Data:  &control.DataTail{Sequence: seq},
 	}
 	links := s.liveLinksLocked()
+	bonded := s.bondPickLocked(links, seq, p, control.EnvelopeSize+len(p))
 	s.mu.Unlock()
 
 	if len(links) == 0 {
@@ -988,6 +996,9 @@ func (s *Session) Send(p []byte) error {
 	key := extractFlowKeyBytes(p)
 	idx := int(flowHashBytes(key) % uint64(len(top)))
 	chosen := top[idx]
+	if bonded != nil {
+		chosen = bonded
+	}
 
 	n := s.cntDataSent.Add(1)
 	if n == 1 || n%100 == 0 {
@@ -1414,6 +1425,7 @@ func (s *Session) receiveIPv4(link *transportLink, p []byte, env *control.Envelo
 	}
 	link.lastHeard = time.Now()
 	cb := s.dataCallback
+	s.bondAckLocked(link, env.Data.Sequence)
 	s.mu.Unlock()
 	n := s.cntDataRecv.Add(1)
 	if n == 1 || n%100 == 0 {
@@ -1442,6 +1454,11 @@ func (s *Session) receiveControl(link *transportLink, p []byte, env *control.Env
 		return
 	}
 	link.lastHeard = time.Now()
+	if sub := env.Control.Subtype; sub == control.SubtypeBonding || sub == control.SubtypeBondingAck {
+		if s.receiveBondingLocked(link, sub, p[control.EnvelopeSize:]) {
+			return
+		}
+	}
 	switch env.Control.Subtype {
 	case control.SubtypeLinkPing:
 		noPong := s.noPong
@@ -1539,12 +1556,14 @@ func (s *Session) Stats() TransportStats {
 
 	var out TransportStats
 	for _, l := range links {
-		st := l.raw.Stats()
+		st := l.batched.Stats()
 		out.BytesSent += st.BytesSent
 		out.BytesReceived += st.BytesReceived
 		out.PacketsSent += st.PacketsSent
 		out.PacketsRecv += st.PacketsRecv
 		out.Reconnects += st.Reconnects
+		out.QueueWaits += st.QueueWaits
+		out.SendRetries += st.SendRetries
 	}
 	out.Connected = s.IsConnected()
 	return out

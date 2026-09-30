@@ -5,6 +5,90 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+- Integrated current upstream updates with fork and bonding.
+
+## [0.4.0] / node-v1.3.0 - 2026-09-30 (meepo161/OpenFlux)
+
+### Added
+
+- Bonding: a client with `--bonding` (`Bonding = yes` in a .conf) uses all
+  its carriers at once, so documents on several networks (mobile data and
+  Wi-Fi) or several documents on one add their speeds up, and a carrier
+  that drops leaves the rest carrying on. TCP connections spread over the
+  carriers, one carrier each, and move when theirs is lost; UDP (SRT, QUIC)
+  is split packet by packet. The exit agrees by itself; exits before
+  node-v1.3.0 ignore the request and the client routes as before. Three
+  Mail.ru documents, three connections: 0.84 MB/s against 0.59 on one.
+- `Network = cellular|wifi|ethernet` per `[Transport]` binds a carrier to a
+  network: Android through the app (mobile data kept up next to Wi-Fi),
+  Windows by adapter type. The mobile library takes `"network"` per
+  transport, `"bonding"` next to them, and the app's NetworkBinder.
+
+### Fixed
+
+- `.conf` booleans took only true/false: `Bonding = yes` read as off.
+
+## [0.3.3] / node-v1.2.3 - 2026-09-30 (meepo161/OpenFlux)
+
+### Fixed
+
+- Mail.ru carrier: when the second peer joined the document, the editor
+  server locked the document on the first one and, since it never unlocked
+  it, dropped it 30 seconds later (disconnectReason 4007); rejoining, it
+  locked the document on the other peer. The carrier went down every half
+  minute while both peers were on it, and every rejoin stalled traffic for
+  up to 30 seconds, so long uploads such as a stream broke. The carrier now
+  unlocks the document for a joining peer (unLockDocument); a test pair held
+  a two-minute upload at about 4.8 Mbit/s without a drop.
+
+## [0.3.2] / node-v1.2.2 - 2026-09-30 (meepo161/OpenFlux)
+
+### Fixed
+
+- A node set up by the wizard (.conf carriers) or with --transports served
+  Session clients only: a client that speaks classic, such as the iOS app,
+  was dropped on every carrier ("serves Session peers only") and never got
+  through. Such an exit now also serves classic clients on any of its
+  carriers, as a --transport=X exit does; --negotiate stays Session-only.
+  The exit serves one client at a time, and a classic client is answered
+  only while no Session client is active on the channel.
+
+## [0.3.1] / node-v1.2.1 - 2026-09-29 (meepo161/OpenFlux)
+
+### Fixed
+
+- A full packet batch queue now waits for capacity instead of dropping data.
+  A batch rejected by a temporarily full or disconnected carrier is retried
+  in order until it is accepted or the tunnel stops.
+
+### Added
+
+- Tunnel diagnostics report queue waits, carrier send retries and TCP
+  retransmissions every 30 seconds when any of those counters increases.
+
+## [0.3.0] / node-v1.2.0 - 2026-09-29 (meepo161/OpenFlux)
+
+The fork on p1neappleXpress/OpenFlux 0.2.0 (one protocol for every client,
+links made and read by the core) with the node wizard's transport choice
+and self-updating nodes (p1neappleXpress/OpenFlux#125) and the Accounts
+core side (`mobile.OfferExitCookies`). The node core is `node-v1.2.0`.
+
+## [0.2.0] / node-v1.1.0 - 2026-09-28 (meepo161/OpenFlux)
+
+Releases of the meepo161 fork: the core with the node wizard's transport
+choice and self-updating nodes (p1neappleXpress/OpenFlux#125), wired to
+this fork.
+
+### Changed
+
+- `deploy/node-install.sh` installs the core from this fork's `node-v*`
+  releases and its updater follows them (`RELEASE_REPO=meepo161/OpenFlux`).
+- The node wizard (`--node-wizard` `connect`, `mobile.NodeConnect`) takes a
+  `source`: `fork` (default) installs this fork's core, `official` the same
+  script following p1neappleXpress/OpenFlux (`provision.PinnedFor`).
+
+
 ### Added
 
 - The node wizard (`--node-wizard`, `mobile.Node*`) lets a new channel use

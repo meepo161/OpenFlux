@@ -240,8 +240,9 @@ func (t *BoardsTransport) getAllowCaptcha(client *http.Client, u, hash string) e
 func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
 	jar := t.jar()
 	client := &http.Client{
-		Jar:     jar,
-		Timeout: 15 * time.Second,
+		Jar:       jar,
+		Timeout:   15 * time.Second,
+		Transport: netbind.HTTPTransport(t.network()),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -521,7 +522,7 @@ func (t *BoardsTransport) connectAndServe(info boardsInfo) error {
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 15 * time.Second,
-		NetDialContext: netbind.Wrap(&net.Dialer{
+		NetDialContext: netbind.WrapFor(t.network(), &net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
@@ -1129,4 +1130,12 @@ func (t *BoardsTransport) ApplyCookies(values map[string]string) error {
 		_ = s.Conn.Close()
 	}
 	return nil
+}
+
+// network is the network this carrier dials through (TransportConfig.Network).
+func (t *BoardsTransport) network() string {
+	if t.BaseTransport == nil {
+		return ""
+	}
+	return t.GetConfig().Network
 }

@@ -210,7 +210,7 @@ func (t *YandexDocsTransport) connectToDoc(attempt int) {
 		// insufficient on iOS).
 		dialer := websocket.Dialer{
 			HandshakeTimeout: 15 * time.Second,
-			NetDialContext: netbind.Wrap(&net.Dialer{
+			NetDialContext: netbind.WrapFor(t.network(), &net.Dialer{
 				Timeout:   10 * time.Second,
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
@@ -580,7 +580,8 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 	}
 
 	client := &http.Client{
-		Jar: jar,
+		Jar:       jar,
+		Transport: netbind.HTTPTransport(t.network()),
 		// НЕ следуем редиректам автоматически — обрабатываем вручную.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -782,4 +783,12 @@ func mustParseURL(rawURL string) *url.URL {
 		panic(err)
 	}
 	return u
+}
+
+// network is the network this carrier dials through (TransportConfig.Network).
+func (t *YandexDocsTransport) network() string {
+	if t.BaseTransport == nil {
+		return ""
+	}
+	return t.GetConfig().Network
 }
